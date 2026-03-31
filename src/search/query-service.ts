@@ -5,7 +5,8 @@ import type { EmbeddingProvider, RerankProvider } from "../providers/types";
 import type { SearchResult } from "../types/domain";
 import { vectorSearch } from "./vector-search";
 import { getIndexMode } from "../settings/types";
-import { arrayBufferToBase64 } from "../utils/base64";
+import { arrayBufferToDataUrl } from "../utils/base64";
+import { imageMimeTypeFromExtension } from "../utils/mime";
 
 /**
  * Orchestrates the search pipeline: query embedding → vector recall → optional rerank → result assembly.
@@ -68,7 +69,12 @@ export class QueryService {
 
 		const buffer = await this.app.vault.readBinary(file as any);
 		const queryEmbedding = await this.embeddingProvider.embed({
-			images: [arrayBufferToBase64(buffer)],
+			images: [
+				arrayBufferToDataUrl(
+					buffer,
+					imageMimeTypeFromExtension((file as any).extension)
+				),
+			],
 		});
 		const queryVector = queryEmbedding.vectors[0];
 		if (!queryVector) {

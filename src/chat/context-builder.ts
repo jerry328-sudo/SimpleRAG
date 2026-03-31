@@ -3,7 +3,8 @@ import type { Database } from "../storage/db";
 import type { SimpleRAGSettings } from "../settings/types";
 import type { SearchResult, NoteChunk, AssetMention } from "../types/domain";
 import { estimateTokens } from "../indexing/chunking/markdown-parser";
-import { arrayBufferToBase64 } from "../utils/base64";
+import { arrayBufferToDataUrl } from "../utils/base64";
+import { imageMimeTypeFromExtension } from "../utils/mime";
 
 export interface DocumentPacket {
 	type: "note" | "image";
@@ -231,26 +232,12 @@ export class ContextBuilder {
 
 		try {
 			const buffer = await this.app.vault.readBinary(file as any);
-			const base64 = arrayBufferToBase64(buffer);
-			return `data:${this.getMimeType(file.extension)};base64,${base64}`;
+			return arrayBufferToDataUrl(
+				buffer,
+				imageMimeTypeFromExtension(file.extension)
+			);
 		} catch {
 			return undefined;
-		}
-	}
-
-	private getMimeType(extension: string): string {
-		switch (extension.toLowerCase()) {
-			case "png":
-				return "image/png";
-			case "jpg":
-			case "jpeg":
-				return "image/jpeg";
-			case "gif":
-				return "image/gif";
-			case "webp":
-				return "image/webp";
-			default:
-				return "application/octet-stream";
 		}
 	}
 

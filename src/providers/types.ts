@@ -11,7 +11,7 @@ export interface EmbeddingCapability {
 
 export interface EmbeddingRequest {
 	texts?: string[];
-	/** Base64-encoded images */
+	/** Base64-encoded images or data URLs */
 	images?: string[];
 }
 

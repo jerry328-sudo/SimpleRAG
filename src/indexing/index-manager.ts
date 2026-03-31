@@ -12,6 +12,8 @@ import { extractImageReferences } from "./links/image-reference-resolver";
 import { getIndexMode } from "../settings/types";
 import { hashBytes, hashText } from "../utils/hash";
 import { VaultScanner } from "./scanner";
+import { arrayBufferToDataUrl } from "../utils/base64";
+import { imageMimeTypeFromPath } from "../utils/mime";
 
 /**
  * Orchestrates the indexing pipeline: reading dirty files, chunking,
@@ -173,7 +175,7 @@ export class IndexManager {
 				if (!existing) {
 					this.db.upsertAsset({
 						asset_path: ref.asset_path,
-						mime_type: guessMimeType(ref.asset_path),
+						mime_type: imageMimeTypeFromPath(ref.asset_path),
 						reference_count: 0,
 						indexed_at_ms: null,
 					});
@@ -286,7 +288,6 @@ export class IndexManager {
 				const arrayBuffer = await this.app.vault.readBinary(
 					assetFile as any
 				);
-				const base64 = arrayBufferToBase64(arrayBuffer);
 				const bytes = new Uint8Array(arrayBuffer);
 				const contentHash = hashBytes(bytes);
 
@@ -295,7 +296,12 @@ export class IndexManager {
 				}
 
 				const response = await this.embeddingProvider.embed({
-					images: [base64],
+					images: [
+						arrayBufferToDataUrl(
+							arrayBuffer,
+							imageMimeTypeFromPath(asset.asset_path)
+						),
+					],
 				});
 
 				if (response.vectors[0]) {
@@ -474,28 +480,3 @@ function buildHeadingPathLookup(
 	};
 }
 
-function guessMimeType(path: string): string {
-	const ext = path.split(".").pop()?.toLowerCase();
-	switch (ext) {
-		case "png":
-			return "image/png";
-		case "jpg":
-		case "jpeg":
-			return "image/jpeg";
-		case "webp":
-			return "image/webp";
-		case "gif":
-			return "image/gif";
-		default:
-			return "application/octet-stream";
-	}
-}
-
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-	const bytes = new Uint8Array(buffer);
-	let binary = "";
-	for (let i = 0; i < bytes.length; i++) {
-		binary += String.fromCharCode(bytes[i]!);
-	}
-	return btoa(binary);
-}

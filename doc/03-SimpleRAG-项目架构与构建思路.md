@@ -92,14 +92,17 @@ src/
     paths.ts
     state.ts
   providers/
+    gemini.ts
     registry.ts
     request.ts
     types.ts
     embedding/
+      gemini.ts
       openai-compatible.ts
     rerank/
       openai-compatible.ts
     chat/
+      gemini.ts
       openai-compatible.ts
   storage/
     db.ts
@@ -326,7 +329,10 @@ src/
 - 校验当前 settings
 - 根据 settings 构造 provider 实例
 
-当前虽然只有 `openai-compatible` 一个实现，但 registry 已经提供了扩展框架。
+当前 provider 层已经支持两类实现：
+
+- `openai-compatible`
+- `gemini`
 
 后续新增 provider 时，建议保持下面的改法：
 
@@ -350,6 +356,37 @@ src/
 - embedding/rerank/chat 不再各自重复实现重试逻辑
 - 后续统一修改网络策略更容易
 - 业务层不用关心请求层细节
+
+### 8.5 为什么 Gemini 走独立 provider
+
+当前已经新增：
+
+- [`src/providers/gemini.ts`](E:/code/GitHub/Obsidian/SimpleRAG/src/providers/gemini.ts)
+- [`src/providers/embedding/gemini.ts`](E:/code/GitHub/Obsidian/SimpleRAG/src/providers/embedding/gemini.ts)
+- [`src/providers/chat/gemini.ts`](E:/code/GitHub/Obsidian/SimpleRAG/src/providers/chat/gemini.ts)
+
+原因很直接：
+
+- Gemini 的路径不是 OpenAI 风格
+- 鉴权头是 `x-goog-api-key`
+- chat 走 `generateContent / streamGenerateContent`
+- embedding 走 `embedContent / batchEmbedContents`
+- 多模态图片输入在 REST 层使用 `inline_data`
+
+如果硬塞进 `openai-compatible`，provider 层会充满条件分支，最终把抽象边界破坏掉。
+
+当前的正确做法是：
+
+- 共享统一的 provider 接口
+- 共享统一的 timeout / retry / streaming 封装
+- 但保留 Gemini 自己的协议转换层
+
+当前这层还额外承担了一件兼容性工作：
+
+- 如果用户给 Gemini 配的是 Cloudflare Gateway 这类代理根路径，而不是完整的 Gemini API 版本路径
+- provider 会自动补上 `/v1beta`
+
+这样设置页里的 Gemini Base URL 既可以直接填官方地址，也可以填代理前缀地址，而不要求用户自己手工补完整版本后缀。
 
 ---
 
@@ -782,6 +819,7 @@ chunk 只是检索单元，不是内容所有权单元。
 - 索引重建与旧 embedding 清理
 - 模型过滤与重建提示
 - 图片证据进入聊天
+- Gemini provider 的请求体与流式解析
 
 这些测试之所以重要，是因为它们都对应“容易悄悄回归但影响很大”的行为。
 
@@ -795,6 +833,21 @@ chunk 只是检索单元，不是内容所有权单元。
 - mock `Modal` / `Setting`
 
 如果后续继续改测试，建议优先在这里补能力，而不是在每个测试文件里重复造假对象。
+
+### 16.3 Gemini provider 的测试边界
+
+当前已经补上：
+
+- [`tests/gemini-provider.test.ts`](E:/code/GitHub/Obsidian/SimpleRAG/tests/gemini-provider.test.ts)
+
+它重点覆盖：
+
+- registry 是否能创建 Gemini embedding/chat provider
+- Gemini embedding 的 REST 请求体是否正确
+- Gemini chat 的 `system_instruction / contents / inline_data` 映射是否正确
+- Gemini 流式 SSE 是否能正确切成聊天增量事件
+
+这类测试很关键，因为 provider 协议字段名一旦漂移，通常不会在 UI 层第一时间暴露出来。
 
 ---
 
@@ -820,6 +873,7 @@ chunk 只是检索单元，不是内容所有权单元。
 - `src/providers/types.ts`
 - `src/providers/registry.ts`
 - `src/providers/request.ts`
+- `src/providers/gemini.ts`
 
 不要直接在 `main.ts` 或 `query-service.ts` 里写 HTTP 逻辑。
 

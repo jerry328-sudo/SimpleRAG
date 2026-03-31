@@ -21,6 +21,12 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 	display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
+		const selectedEmbeddingProvider = this.registry.getEmbeddingProviderOption(
+			this.plugin.settings.embeddingProvider
+		);
+		const selectedChatProvider = this.registry.getChatProviderOption(
+			this.plugin.settings.chatProvider
+		);
 
 		// ---- Group A: Providers ----
 		containerEl.createEl("h2", { text: "Providers" });
@@ -35,18 +41,27 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 				dropdown
 					.setValue(this.plugin.settings.embeddingProvider)
 					.onChange(async (value) => {
+						const previousProvider =
+							this.plugin.settings.embeddingProvider;
 						this.plugin.settings.embeddingProvider = value;
+						this.applyEmbeddingProviderDefaults(
+							previousProvider,
+							value
+						);
 						await this.plugin.saveSettings();
-						this.showRebuildWarning(containerEl);
+						this.display();
+						this.showRebuildWarning(this.containerEl);
 					});
 			});
 
 		new Setting(containerEl)
 			.setName("Embedding base URL")
-			.setDesc("Base URL for the embedding API (OpenAI-compatible)")
+			.setDesc("Base URL for the embedding API")
 			.addText((text) =>
 				text
-					.setPlaceholder("https://api.openai.com/v1")
+					.setPlaceholder(
+						selectedEmbeddingProvider?.defaultBaseUrl ?? ""
+					)
 					.setValue(this.plugin.settings.embeddingBaseUrl)
 					.onChange(async (value) => {
 						this.plugin.settings.embeddingBaseUrl = value;
@@ -59,12 +74,18 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 			.setDesc("Model name for generating embeddings")
 			.addText((text) =>
 				text
-					.setPlaceholder("text-embedding-3-small")
+					.setPlaceholder(
+						this.getRecommendedEmbeddingModel(
+							this.plugin.settings.embeddingProvider,
+							this.plugin.settings.enableImageEmbedding
+						)
+					)
 					.setValue(this.plugin.settings.embeddingModel)
 					.onChange(async (value) => {
 						this.plugin.settings.embeddingModel = value;
 						await this.plugin.saveSettings();
-						this.showRebuildWarning(containerEl);
+						this.display();
+						this.showRebuildWarning(this.containerEl);
 					})
 			);
 
@@ -74,7 +95,7 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 			.addText((text) => {
 				text.inputEl.type = "password";
 				return text
-					.setPlaceholder("sk-...")
+					.setPlaceholder("API key or token")
 					.setValue(this.plugin.settings.embeddingApiToken)
 					.onChange(async (value) => {
 						this.plugin.settings.embeddingApiToken = value;
@@ -95,8 +116,10 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.enableImageEmbedding)
 					.onChange(async (value) => {
 						this.plugin.settings.enableImageEmbedding = value;
+						this.syncEmbeddingModelToCurrentMode();
 						await this.plugin.saveSettings();
-						this.showRebuildWarning(containerEl);
+						this.display();
+						this.showRebuildWarning(this.containerEl);
 					})
 			);
 
@@ -290,8 +313,11 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 				dropdown
 					.setValue(this.plugin.settings.chatProvider)
 					.onChange(async (value) => {
+						const previousProvider = this.plugin.settings.chatProvider;
 						this.plugin.settings.chatProvider = value;
+						this.applyChatProviderDefaults(previousProvider, value);
 						await this.plugin.saveSettings();
+						this.display();
 					});
 			});
 
@@ -299,7 +325,7 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 			.setName("Chat base URL")
 			.addText((text) =>
 				text
-					.setPlaceholder("https://api.openai.com/v1")
+					.setPlaceholder(selectedChatProvider?.defaultBaseUrl ?? "")
 					.setValue(this.plugin.settings.chatBaseUrl)
 					.onChange(async (value) => {
 						this.plugin.settings.chatBaseUrl = value;
@@ -311,7 +337,7 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 			.setName("Chat model")
 			.addText((text) =>
 				text
-					.setPlaceholder("gpt-4o-mini")
+					.setPlaceholder(selectedChatProvider?.defaultModel ?? "")
 					.setValue(this.plugin.settings.chatModel)
 					.onChange(async (value) => {
 						this.plugin.settings.chatModel = value;
@@ -324,7 +350,7 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 			.addText((text) => {
 				text.inputEl.type = "password";
 				return text
-					.setPlaceholder("sk-...")
+					.setPlaceholder("API key or token")
 					.setValue(this.plugin.settings.chatApiToken)
 					.onChange(async (value) => {
 						this.plugin.settings.chatApiToken = value;
@@ -414,7 +440,7 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 			.addText((text) => {
 				text.inputEl.type = "password";
 				return text
-					.setPlaceholder("sk-...")
+					.setPlaceholder("API key or token")
 					.setValue(this.plugin.settings.rerankApiToken)
 					.onChange(async (value) => {
 						this.plugin.settings.rerankApiToken = value;
@@ -536,6 +562,98 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 			);
 			modal.open();
 		});
+	}
+
+	private getRecommendedEmbeddingModel(
+		providerId: string,
+		enableImageEmbedding: boolean
+	): string {
+		const option = this.registry.getEmbeddingProviderOption(providerId);
+		if (!option) {
+			return "";
+		}
+
+		if (enableImageEmbedding) {
+			return option.multimodalModel ?? option.defaultModel ?? "";
+		}
+
+		return option.defaultModel ?? option.multimodalModel ?? "";
+	}
+
+	private syncEmbeddingModelToCurrentMode(): void {
+		const option = this.registry.getEmbeddingProviderOption(
+			this.plugin.settings.embeddingProvider
+		);
+		if (!option) {
+			return;
+		}
+
+		const currentModel = this.plugin.settings.embeddingModel.trim();
+		const knownDefaults = new Set(
+			[option.defaultModel, option.multimodalModel].filter(Boolean)
+		);
+		if (!currentModel || knownDefaults.has(currentModel)) {
+			this.plugin.settings.embeddingModel = this.getRecommendedEmbeddingModel(
+				this.plugin.settings.embeddingProvider,
+				this.plugin.settings.enableImageEmbedding
+			);
+		}
+	}
+
+	private applyEmbeddingProviderDefaults(
+		previousProviderId: string,
+		nextProviderId: string
+	): void {
+		const previous = this.registry.getEmbeddingProviderOption(
+			previousProviderId
+		);
+		const next = this.registry.getEmbeddingProviderOption(nextProviderId);
+		if (!next) {
+			return;
+		}
+
+		if (
+			!this.plugin.settings.embeddingBaseUrl.trim() ||
+			this.plugin.settings.embeddingBaseUrl === previous?.defaultBaseUrl
+		) {
+			this.plugin.settings.embeddingBaseUrl = next.defaultBaseUrl ?? "";
+		}
+
+		const currentModel = this.plugin.settings.embeddingModel.trim();
+		const previousDefaults = new Set(
+			[previous?.defaultModel, previous?.multimodalModel].filter(Boolean)
+		);
+		if (!currentModel || previousDefaults.has(currentModel)) {
+			this.plugin.settings.embeddingModel = this.getRecommendedEmbeddingModel(
+				nextProviderId,
+				this.plugin.settings.enableImageEmbedding
+			);
+		}
+	}
+
+	private applyChatProviderDefaults(
+		previousProviderId: string,
+		nextProviderId: string
+	): void {
+		const previous = this.registry.getChatProviderOption(previousProviderId);
+		const next = this.registry.getChatProviderOption(nextProviderId);
+		if (!next) {
+			return;
+		}
+
+		if (
+			!this.plugin.settings.chatBaseUrl.trim() ||
+			this.plugin.settings.chatBaseUrl === previous?.defaultBaseUrl
+		) {
+			this.plugin.settings.chatBaseUrl = next.defaultBaseUrl ?? "";
+		}
+
+		if (
+			!this.plugin.settings.chatModel.trim() ||
+			this.plugin.settings.chatModel === previous?.defaultModel
+		) {
+			this.plugin.settings.chatModel = next.defaultModel ?? "";
+		}
 	}
 }
 
