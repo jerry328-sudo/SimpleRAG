@@ -1,90 +1,100 @@
-# Obsidian Sample Plugin
+# SimpleRAG
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+[中文文档](README_zh.md)
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
+Local RAG (Retrieval-Augmented Generation) plugin for [Obsidian](https://obsidian.md). Index your vault, search with semantic similarity, and chat with your notes — all powered by your own API keys.
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open modal (simple)" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and output 'click' to the console.
-- Registers a global interval which logs 'setInterval' to the console.
+## Features
 
-## First time developing plugins?
+- **Semantic search** — Find notes by meaning, not just keywords. Chunks are embedded and ranked by cosine similarity.
+- **Multimodal indexing** — Optionally embed images (png, jpg, webp, gif) referenced in your notes alongside text chunks.
+- **Image search** — Search by image: select an indexed image and find visually or semantically similar content.
+- **AI chat** — Ask questions about your vault. The plugin retrieves relevant context and sends it to a chat model with source citations.
+- **AI evidence selection** — Optionally let the chat model pick the most relevant evidence packets before answering, reducing noise and token cost.
+- **Vision support** — When using a vision-capable chat model, image evidence is sent as inline images for visual reasoning.
+- **Reranking** — Optional rerank pass to improve result precision after vector recall.
+- **Streaming responses** — Chat answers stream in real-time when the provider supports it.
+- **Incremental indexing** — Only changed files are re-embedded on update. Full rebuild is available when needed.
+- **Index integrity** — Automatic mismatch detection when provider/model settings change; prompts for rebuild.
 
-Quick starting guide for new plugin devs:
+## Supported Providers
 
-- Check if [someone already developed a plugin for what you want](https://obsidian.md/plugins)! There might be an existing plugin similar enough that you can partner up with.
-- Make a copy of this repo as a template with the "Use this template" button (login to GitHub if you don't see it).
-- Clone your repo to a local development folder. For convenience, you can place this folder in your `.obsidian/plugins/your-plugin-name` folder.
-- Install NodeJS, then run `npm i` in the command line under your repo folder.
-- Run `npm run dev` to compile your plugin from `main.ts` to `main.js`.
-- Make changes to `main.ts` (or create new `.ts` files). Those changes should be automatically compiled into `main.js`.
-- Reload Obsidian to load the new version of your plugin.
-- Enable plugin in settings window.
-- For updates to the Obsidian API run `npm update` in the command line under your repo folder.
+| Role | Provider | Notes |
+|------|----------|-------|
+| Embedding | OpenAI-compatible | Any API following the OpenAI `/v1/embeddings` format |
+| Embedding | Gemini | Google `text-embedding-004`, `gemini-embedding-2-preview`, etc. |
+| Chat | OpenAI-compatible | GPT-4o-mini, DeepSeek, Qwen, or any compatible endpoint |
+| Chat | Gemini | Gemini 2.5 Flash, etc. with streaming and vision |
+| Rerank | OpenAI-compatible | Any API following a rerank request format |
 
-## Releasing new releases
+All network calls go through your own API keys. No data is sent to third parties beyond the provider you configure.
 
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
-- Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
-- Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
-- Publish the release.
+## Installation
 
-> You can simplify the version bump process by running `npm version patch`, `npm version minor` or `npm version major` after updating `minAppVersion` manually in `manifest.json`.
-> The command will bump version in `manifest.json` and `package.json`, and add the entry for the new version to `versions.json`
+### From Obsidian Community Plugins (coming soon)
 
-## Adding your plugin to the community plugin list
+1. Open **Settings → Community plugins → Browse**.
+2. Search for **SimpleRAG**.
+3. Click **Install**, then **Enable**.
 
-- Check the [plugin guidelines](https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines).
-- Publish an initial version.
-- Make sure you have a `README.md` file in the root of your repo.
-- Make a pull request at https://github.com/obsidianmd/obsidian-releases to add your plugin.
+### Manual Installation
 
-## How to use
+1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/user/simple-rag/releases).
+2. Create a folder: `<YourVault>/.obsidian/plugins/simple-rag/`.
+3. Copy the three files into that folder.
+4. Restart Obsidian and enable **SimpleRAG** in **Settings → Community plugins**.
 
-- Clone this repo.
-- Make sure your NodeJS is at least v16 (`node --version`).
-- `npm i` or `yarn` to install dependencies.
-- `npm run dev` to start compilation in watch mode.
+## Quick Start
 
-## Manually installing the plugin
+1. Open **Settings → SimpleRAG**.
+2. Choose an **Embedding provider** (e.g., OpenAI-compatible) and enter your API token.
+3. Run the command **SimpleRAG: Scan vault for changes** (or it runs automatically on startup).
+4. Run **SimpleRAG: Update index** to embed your notes.
+5. Click the search icon in the left ribbon (or run **SimpleRAG: Open search panel**) to start searching.
 
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
+To enable chat: toggle **Enable AI Chat**, configure a **Chat provider** and token, then ask questions in the search panel.
 
-## Improve code quality with eslint
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code. 
-- This project already has eslint preconfigured, you can invoke a check by running`npm run lint`
-- Together with a custom eslint [plugin](https://github.com/obsidianmd/eslint-plugin) for Obsidan specific code guidelines.
-- A GitHub action is preconfigured to automatically lint every commit on all branches.
+## Commands
 
-## Funding URL
+| Command | Description |
+|---------|-------------|
+| **Open search panel** | Open the SimpleRAG sidebar |
+| **Scan vault for changes** | Detect new, modified, and deleted files |
+| **Update index** | Embed dirty files incrementally |
+| **Rebuild full index** | Clear everything and re-index from scratch |
 
-You can include funding URLs where people who use your plugin can financially support it.
+## Settings Overview
 
-The simple way is to set the `fundingUrl` field to your link in your `manifest.json` file:
+| Category | Key Settings |
+|----------|-------------|
+| **Providers** | Embedding provider/model/URL/token, Chat provider/model/URL/token |
+| **Features** | Enable image embedding, Enable AI chat |
+| **Retrieval** | Enable rerank, recall pool size, results per query, default result tab |
+| **Chat** | Short note threshold, max notes in context, context window, AI evidence selection |
+| **Network** | Rerank provider/URL/token, timeout, retry count, max concurrent requests |
+| **Debug** | Show similarity scores, enable debug logs |
 
-```json
-{
-    "fundingUrl": "https://buymeacoffee.com"
-}
+All API tokens are stored locally in Obsidian's plugin data and displayed as password fields in settings.
+
+## Privacy & Security
+
+- **Local-first**: All indexing and storage happens inside your vault. No external server is involved beyond the API providers you configure.
+- **Your keys, your data**: API tokens are stored in Obsidian's plugin data directory, never transmitted except to the endpoints you specify.
+- **No telemetry**: The plugin does not collect any analytics or usage data.
+- **No remote code execution**: The plugin does not fetch or execute remote scripts.
+
+## Development
+
+Requires Node.js 18+.
+
+```bash
+npm install
+npm run dev      # Watch mode
+npm run build    # Production build (type-check + bundle)
+npm test         # Run tests
+npm run lint     # ESLint
 ```
 
-If you have multiple URLs, you can also do:
+## License
 
-```json
-{
-    "fundingUrl": {
-        "Buy Me a Coffee": "https://buymeacoffee.com",
-        "GitHub Sponsor": "https://github.com/sponsors",
-        "Patreon": "https://www.patreon.com/"
-    }
-}
-```
-
-## API Documentation
-
-See https://docs.obsidian.md
+[MIT](LICENSE)
