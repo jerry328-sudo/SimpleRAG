@@ -78,7 +78,12 @@ describe("Gemini provider support", () => {
 
 		const response = await provider.embed({
 			texts: ["alpha"],
-			images: ["data:image/jpeg;base64,QUJDRA=="],
+			images: [
+				{
+					mimeType: "image/jpeg",
+					base64Data: "QUJDRA==",
+				},
+			],
 		});
 
 		expect(response.dimension).toBe(2);
@@ -139,9 +144,10 @@ describe("Gemini provider support", () => {
 					content: [
 						{ type: "text", text: "Describe this image." },
 						{
-							type: "image_url",
-							image_url: {
-								url: "data:image/png;base64,QUJDRA==",
+							type: "image",
+							image: {
+								mimeType: "image/png",
+								base64Data: "QUJDRA==",
 							},
 						},
 					],

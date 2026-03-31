@@ -3,10 +3,9 @@ import type { Database } from "../storage/db";
 import type { SimpleRAGSettings } from "../settings/types";
 import type { EmbeddingProvider, RerankProvider } from "../providers/types";
 import type { SearchResult } from "../types/domain";
+import { loadVaultImagePayload } from "../media/image-loader";
 import { vectorSearch } from "./vector-search";
 import { getIndexMode } from "../settings/types";
-import { arrayBufferToDataUrl } from "../utils/base64";
-import { imageMimeTypeFromExtension } from "../utils/mime";
 
 /**
  * Orchestrates the search pipeline: query embedding → vector recall → optional rerank → result assembly.
@@ -67,14 +66,8 @@ export class QueryService {
 			throw new Error(`Image not found: ${imagePath}`);
 		}
 
-		const buffer = await this.app.vault.readBinary(file as any);
 		const queryEmbedding = await this.embeddingProvider.embed({
-			images: [
-				arrayBufferToDataUrl(
-					buffer,
-					imageMimeTypeFromExtension((file as any).extension)
-				),
-			],
+			images: [await loadVaultImagePayload(this.app, imagePath)],
 		});
 		const queryVector = queryEmbedding.vectors[0];
 		if (!queryVector) {

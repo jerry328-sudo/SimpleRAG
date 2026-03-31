@@ -4,8 +4,11 @@ import type {
 	ChatRequest,
 	ChatResponse,
 	ChatStreamEvent,
+	ChatMessage,
+	ChatContentPart,
 } from "../types";
 import { fetchWithRetry, requestWithRetry } from "../request";
+import { imagePayloadToDataUrl } from "../../utils/base64";
 
 export class OpenAICompatibleChatProvider implements ChatProvider {
 	readonly capability: ChatCapability;
@@ -38,7 +41,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider {
 	async chat(request: ChatRequest): Promise<ChatResponse> {
 		const body = {
 			model: this.capability.modelId,
-			messages: request.messages,
+			messages: this.toOpenAIMessages(request.messages),
 			stream: false,
 		};
 
@@ -74,7 +77,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider {
 	): Promise<void> {
 		const body = {
 			model: this.capability.modelId,
-			messages: request.messages,
+			messages: this.toOpenAIMessages(request.messages),
 			stream: true,
 		};
 
@@ -145,5 +148,35 @@ export class OpenAICompatibleChatProvider implements ChatProvider {
 		}
 
 		onEvent({ delta: "", done: true });
+	}
+
+	private toOpenAIMessages(messages: ChatMessage[]) {
+		return messages.map((message) => ({
+			...message,
+			content: this.toOpenAIContent(message.content),
+		}));
+	}
+
+	private toOpenAIContent(
+		content: string | ChatContentPart[]
+	): string | Array<Record<string, unknown>> {
+		if (typeof content === "string") {
+			return content;
+		}
+
+		return content.map((part) => this.toOpenAIPart(part));
+	}
+
+	private toOpenAIPart(part: ChatContentPart): Record<string, unknown> {
+		if (part.type === "text") {
+			return { type: "text", text: part.text };
+		}
+
+		return {
+			type: "image_url",
+			image_url: {
+				url: imagePayloadToDataUrl(part.image),
+			},
+		};
 	}
 }

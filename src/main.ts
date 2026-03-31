@@ -1,14 +1,12 @@
 import { Notice, Plugin } from "obsidian";
-import { DEFAULT_SETTINGS, SimpleRAGSettings, getIndexMode } from "./settings/types";
+import { DEFAULT_SETTINGS, SimpleRAGSettings } from "./settings/types";
 import { SimpleRAGSettingTab } from "./settings/tab";
 import { Database } from "./storage/db";
 import { getDbPath } from "./runtime/paths";
 import { RuntimeState } from "./runtime/state";
 import { ProviderRegistry } from "./providers/registry";
-import { VaultScanner } from "./indexing/scanner";
-import { IndexManager } from "./indexing/index-manager";
-import { QueryService } from "./search/query-service";
-import { ConversationService } from "./chat/conversation-service";
+import { registerVaultChangeTracking } from "./runtime/vault-change-tracker";
+import { SimpleRAGService } from "./application/simple-rag-service";
 import {
 	SimpleRAGView,
 	VIEW_TYPE_SIMPLE_RAG,
@@ -16,18 +14,11 @@ import {
 import type { SearchResult, IndexStats, ChatReference } from "./types/domain";
 import { loadValidatedSettings } from "./runtime/settings-loader";
 
-const TRACKED_IMAGE_EXTENSIONS = new Set([
-	"png",
-	"jpg",
-	"jpeg",
-	"webp",
-	"gif",
-]);
-
 export default class SimpleRAGPlugin extends Plugin {
 	settings: SimpleRAGSettings = DEFAULT_SETTINGS;
-	db!: Database;
 	state = new RuntimeState();
+	private db!: Database;
+	private service!: SimpleRAGService;
 	private providerRegistry = new ProviderRegistry();
 
 	async onload(): Promise<void> {
@@ -38,6 +29,14 @@ export default class SimpleRAGPlugin extends Plugin {
 		this.db = new Database(this.app, dbPath);
 		const dbWarnings = await this.db.load();
 		dbWarnings.forEach((warning) => this.warnDataIssue(warning));
+		this.service = new SimpleRAGService({
+			app: this.app,
+			db: this.db,
+			state: this.state,
+			providerRegistry: this.providerRegistry,
+			getSettings: () => this.settings,
+		});
+		this.service.refreshStats();
 
 		// Register the sidebar view
 		this.registerView(VIEW_TYPE_SIMPLE_RAG, (leaf) => {
@@ -86,57 +85,7 @@ export default class SimpleRAGPlugin extends Plugin {
 		// Settings tab
 		this.addSettingTab(new SimpleRAGSettingTab(this.app, this));
 
-		// Listen for vault events
-		this.registerEvent(
-			this.app.vault.on("create", (file) => {
-				if (
-					"extension" in file &&
-					typeof file.extension === "string" &&
-					this.shouldTrackExtension(file.extension)
-				) {
-					this.state.markDirty(file.path);
-				}
-			})
-		);
-
-		this.registerEvent(
-			this.app.vault.on("modify", (file) => {
-				if (
-					"extension" in file &&
-					typeof file.extension === "string" &&
-					this.shouldTrackExtension(file.extension)
-				) {
-					this.state.markDirty(file.path);
-				}
-			})
-		);
-
-		this.registerEvent(
-			this.app.vault.on("delete", (file) => {
-				if (
-					"extension" in file &&
-					typeof file.extension === "string" &&
-					this.shouldTrackExtension(file.extension)
-				) {
-					this.state.markDirty(file.path);
-				}
-			})
-		);
-
-		this.registerEvent(
-			this.app.vault.on("rename", (file, oldPath) => {
-				if (this.shouldTrackPath(oldPath)) {
-					this.state.markDirty(oldPath);
-				}
-				if (
-					"extension" in file &&
-					typeof file.extension === "string" &&
-					this.shouldTrackExtension(file.extension)
-				) {
-					this.state.markDirty(file.path);
-				}
-			})
-		);
+		registerVaultChangeTracking(this, this.state, () => this.settings);
 
 		// Perform initial scan (deferred to avoid blocking startup)
 		this.app.workspace.onLayoutReady(async () => {
@@ -152,6 +101,9 @@ export default class SimpleRAGPlugin extends Plugin {
 		const result = await loadValidatedSettings(this);
 		this.settings = result.settings;
 		result.warnings.forEach((warning) => this.warnDataIssue(warning));
+		if (result.shouldPersist) {
+			await this.saveSettings();
+		}
 	}
 
 	async saveSettings(): Promise<void> {
@@ -161,22 +113,8 @@ export default class SimpleRAGPlugin extends Plugin {
 	// ---- Public API for UI ----
 
 	async scanChanges(): Promise<void> {
-		if (this.state.isScanning) return;
-		this.state.isScanning = true;
-
 		try {
-			const scanner = new VaultScanner(this.app, this.db, this.settings);
-			const result = await scanner.scan();
-
-			// Merge scanner-found dirty files with runtime state
-			for (const path of this.state.dirtyFiles) {
-				const file = this.db.getFile(path);
-				if (file && file.status !== "dirty") {
-					this.db.upsertFile({ ...file, status: "dirty" });
-				}
-			}
-
-			this.refreshStats();
+			const result = await this.service.scanChanges();
 			this.refreshView();
 
 			if (this.settings.enableDebugLogs) {
@@ -184,43 +122,16 @@ export default class SimpleRAGPlugin extends Plugin {
 					`[SimpleRAG] Scan: ${result.added.length} added, ${result.modified.length} modified, ${result.deleted.length} deleted`
 				);
 			}
-		} finally {
-			this.state.isScanning = false;
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e);
+			new Notice(`SimpleRAG: Scan failed — ${msg}`);
+			console.error("[SimpleRAG] Scan error:", e);
 		}
 	}
 
 	async updateIndex(): Promise<void> {
-		if (this.state.isIndexing) {
-			new Notice("SimpleRAG: Indexing already in progress");
-			return;
-		}
-
-		if (!this.settings.embeddingApiToken) {
-			new Notice("SimpleRAG: Please configure an embedding API token in settings");
-			return;
-		}
-
-		const validationErrors = this.providerRegistry.validateSettings(this.settings);
-		if (validationErrors.length > 0) {
-			new Notice(`SimpleRAG: ${validationErrors[0]}`);
-			return;
-		}
-
-		this.state.isIndexing = true;
-
 		try {
-			const embeddingProvider =
-				this.providerRegistry.createEmbeddingProvider(this.settings);
-
-			const indexManager = new IndexManager(
-				this.app,
-				this.db,
-				this.settings,
-				this.state,
-				embeddingProvider
-			);
-
-			const result = await indexManager.updateIndex((current, total) => {
+			const result = await this.service.updateIndex((current, total) => {
 				if (this.settings.enableDebugLogs) {
 					console.log(
 						`[SimpleRAG] Indexing ${current}/${total}`
@@ -228,8 +139,6 @@ export default class SimpleRAGPlugin extends Plugin {
 				}
 			});
 
-			this.state.clearDirty();
-			this.refreshStats();
 			this.refreshView();
 
 			if (result.errors > 0) {
@@ -241,43 +150,12 @@ export default class SimpleRAGPlugin extends Plugin {
 			const msg = e instanceof Error ? e.message : String(e);
 			new Notice(`SimpleRAG: Index failed — ${msg}`);
 			console.error("[SimpleRAG] Index error:", e);
-		} finally {
-			this.state.isIndexing = false;
 		}
 	}
 
 	async rebuildIndex(): Promise<void> {
-		if (this.state.isIndexing) {
-			new Notice("SimpleRAG: Indexing already in progress");
-			return;
-		}
-
-		if (!this.settings.embeddingApiToken) {
-			new Notice("SimpleRAG: Please configure an embedding API token in settings");
-			return;
-		}
-
-		const validationErrors = this.providerRegistry.validateSettings(this.settings);
-		if (validationErrors.length > 0) {
-			new Notice(`SimpleRAG: ${validationErrors[0]}`);
-			return;
-		}
-
-		this.state.isIndexing = true;
-
 		try {
-			const embeddingProvider =
-				this.providerRegistry.createEmbeddingProvider(this.settings);
-
-			const indexManager = new IndexManager(
-				this.app,
-				this.db,
-				this.settings,
-				this.state,
-				embeddingProvider
-			);
-
-			const result = await indexManager.rebuildIndex(
+			const result = await this.service.rebuildIndex(
 				(current, total) => {
 					if (this.settings.enableDebugLogs) {
 						console.log(
@@ -287,8 +165,6 @@ export default class SimpleRAGPlugin extends Plugin {
 				}
 			);
 
-			this.state.clearDirty();
-			this.refreshStats();
 			this.refreshView();
 
 			new Notice(
@@ -298,80 +174,20 @@ export default class SimpleRAGPlugin extends Plugin {
 			const msg = e instanceof Error ? e.message : String(e);
 			new Notice(`SimpleRAG: Rebuild failed — ${msg}`);
 			console.error("[SimpleRAG] Rebuild error:", e);
-		} finally {
-			this.state.isIndexing = false;
 		}
 	}
 
 	async clearIndex(): Promise<void> {
-		this.db.clearAll();
-		await this.db.save();
-		this.state.clearDirty();
-		this.refreshStats();
+		await this.service.clearIndex();
 		this.refreshView();
 	}
 
 	async search(query: string): Promise<SearchResult[]> {
-		if (!this.settings.embeddingApiToken) {
-			throw new Error("Please configure an embedding API token in settings");
-		}
-
-		const validationErrors = this.providerRegistry.validateSettings(this.settings);
-		if (validationErrors.length > 0) {
-			throw new Error(validationErrors[0]!);
-		}
-
-		const embeddingProvider =
-			this.providerRegistry.createEmbeddingProvider(this.settings);
-
-		let rerankProvider = null;
-		if (this.settings.enableRerank && this.settings.rerankApiToken) {
-			rerankProvider =
-				this.providerRegistry.createRerankProvider(this.settings);
-		}
-
-		const queryService = new QueryService(
-			this.app,
-			this.db,
-			this.settings,
-			embeddingProvider,
-			rerankProvider
-		);
-
-		return queryService.searchText(query);
+		return this.service.searchText(query);
 	}
 
 	async searchByImage(imagePath: string): Promise<SearchResult[]> {
-		if (!this.settings.embeddingApiToken) {
-			throw new Error("Please configure an embedding API token in settings");
-		}
-		if (!this.settings.enableImageEmbedding) {
-			throw new Error("Enable image embedding before running image search.");
-		}
-
-		const validationErrors = this.providerRegistry.validateSettings(this.settings);
-		if (validationErrors.length > 0) {
-			throw new Error(validationErrors[0]!);
-		}
-
-		const embeddingProvider =
-			this.providerRegistry.createEmbeddingProvider(this.settings);
-
-		let rerankProvider = null;
-		if (this.settings.enableRerank && this.settings.rerankApiToken) {
-			rerankProvider =
-				this.providerRegistry.createRerankProvider(this.settings);
-		}
-
-		const queryService = new QueryService(
-			this.app,
-			this.db,
-			this.settings,
-			embeddingProvider,
-			rerankProvider
-		);
-
-		return queryService.searchImage(imagePath);
+		return this.service.searchImage(imagePath);
 	}
 
 	async chat(
@@ -379,42 +195,15 @@ export default class SimpleRAGPlugin extends Plugin {
 		searchResults: SearchResult[],
 		history: Array<{ role: "user" | "assistant"; content: string }>
 	): Promise<{ content: string; references: ChatReference[] }> {
-		if (!this.settings.chatApiToken) {
-			throw new Error("Please configure a chat API token in settings");
-		}
-
-		const validationErrors = this.providerRegistry.validateSettings(this.settings);
-		if (validationErrors.length > 0) {
-			throw new Error(validationErrors[0]!);
-		}
-
-		const chatProvider =
-			this.providerRegistry.createChatProvider(this.settings);
-
-		const conversation = new ConversationService(
-			this.app,
-			this.db,
-			this.settings,
-			chatProvider
-		);
-
-		return conversation.chat(question, searchResults, history);
+		return this.service.chat(question, searchResults, history);
 	}
 
 	getIndexStats(): IndexStats {
-		const dbStats = this.db.getStats();
-		const lastScanAt = this.db.getMeta("last_scan_at");
-		const lastIndexAt = this.db.getMeta("last_index_at");
+		return this.service.getIndexStats();
+	}
 
-		return {
-			indexMode: getIndexMode(this.settings),
-			lastScanAt: lastScanAt ? parseInt(lastScanAt, 10) : null,
-			lastIndexAt: lastIndexAt ? parseInt(lastIndexAt, 10) : null,
-			totalNotes: dbStats.totalNotes,
-			totalChunks: dbStats.totalChunks,
-			totalAssets: dbStats.totalAssets,
-			dirtyFiles: dbStats.dirtyFiles + this.state.getDirtyCount(),
-		};
+	listIndexedAssetPaths(): string[] {
+		return this.service.listIndexedAssetPaths();
 	}
 
 	// ---- Private helpers ----
@@ -437,10 +226,6 @@ export default class SimpleRAGPlugin extends Plugin {
 		}
 	}
 
-	private refreshStats(): void {
-		this.state.lastStats = this.getIndexStats();
-	}
-
 	private refreshView(): void {
 		const leaves =
 			this.app.workspace.getLeavesOfType(VIEW_TYPE_SIMPLE_RAG);
@@ -450,20 +235,6 @@ export default class SimpleRAGPlugin extends Plugin {
 				view.refresh();
 			}
 		}
-	}
-
-	private shouldTrackExtension(extension: string): boolean {
-		const ext = extension.toLowerCase();
-		if (ext === "md") return true;
-		return (
-			this.settings.enableImageEmbedding &&
-			TRACKED_IMAGE_EXTENSIONS.has(ext)
-		);
-	}
-
-	private shouldTrackPath(path: string): boolean {
-		const ext = path.split(".").pop()?.toLowerCase();
-		return ext ? this.shouldTrackExtension(ext) : false;
 	}
 
 	private warnDataIssue(message: string): void {

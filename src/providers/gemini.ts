@@ -1,4 +1,4 @@
-import { parseDataUrl } from "../utils/base64";
+import type { BinaryImagePayload } from "../types/media";
 
 export const GEMINI_DEFAULT_BASE_URL =
 	"https://generativelanguage.googleapis.com/v1beta";
@@ -27,26 +27,16 @@ export function isGeminiMultimodalEmbeddingModel(modelId: string): boolean {
 	return normalized.startsWith("gemini-embedding-2");
 }
 
-export function buildGeminiInlineDataPart(image: string): {
+export function buildGeminiInlineDataPart(image: BinaryImagePayload): {
 	inline_data: {
 		mime_type: string;
 		data: string;
 	};
 } {
-	const parsed = parseDataUrl(image);
-	if (parsed) {
-		return {
-			inline_data: {
-				mime_type: parsed.mimeType,
-				data: parsed.data,
-			},
-		};
-	}
-
 	return {
 		inline_data: {
-			mime_type: "image/png",
-			data: image,
+			mime_type: image.mimeType,
+			data: image.base64Data,
 		},
 	};
 }

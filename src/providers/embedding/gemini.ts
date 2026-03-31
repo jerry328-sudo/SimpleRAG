@@ -45,7 +45,7 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
 			supportsText: true,
 			supportsImage,
 			supportsCrossModal: supportsImage,
-			dimension: 3072,
+			dimension: 0,
 			maxInputTokens: supportsImage ? 8192 : 2048,
 		};
 	}

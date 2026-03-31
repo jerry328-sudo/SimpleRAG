@@ -1,3 +1,5 @@
+import type { BinaryImagePayload } from "../types/media";
+
 /** Capability descriptor for an embedding model. */
 export interface EmbeddingCapability {
 	providerId: string;
@@ -11,8 +13,7 @@ export interface EmbeddingCapability {
 
 export interface EmbeddingRequest {
 	texts?: string[];
-	/** Base64-encoded images or data URLs */
-	images?: string[];
+	images?: BinaryImagePayload[];
 }
 
 export interface EmbeddingResponse {
@@ -61,7 +62,7 @@ export interface ChatCapability {
 
 export type ChatContentPart =
 	| { type: "text"; text: string }
-	| { type: "image_url"; image_url: { url: string } };
+	| { type: "image"; image: BinaryImagePayload };
 
 export interface ChatMessage {
 	role: "system" | "user" | "assistant";

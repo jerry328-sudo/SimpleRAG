@@ -2,9 +2,9 @@ import type { App } from "obsidian";
 import type { Database } from "../storage/db";
 import type { SimpleRAGSettings } from "../settings/types";
 import type { SearchResult, NoteChunk, AssetMention } from "../types/domain";
+import type { BinaryImagePayload } from "../types/media";
 import { estimateTokens } from "../indexing/chunking/markdown-parser";
-import { arrayBufferToDataUrl } from "../utils/base64";
-import { imageMimeTypeFromExtension } from "../utils/mime";
+import { tryLoadVaultImagePayload } from "../media/image-loader";
 
 export interface DocumentPacket {
 	type: "note" | "image";
@@ -14,7 +14,7 @@ export interface DocumentPacket {
 	chunks: NoteChunk[];
 	mentions: AssetMention[];
 	score: number;
-	imageDataUrl?: string;
+	imagePayload?: BinaryImagePayload;
 }
 
 /**
@@ -202,7 +202,7 @@ export class ContextBuilder {
 					})
 					.join("\n\n")
 			: "No note references were available for this image.";
-		const imageDataUrl = await this.buildImageDataUrl(
+		const imagePayload = await this.buildImagePayload(
 			result.asset.asset_path
 		);
 
@@ -214,31 +214,14 @@ export class ContextBuilder {
 			chunks: [],
 			mentions,
 			score: result.score,
-			imageDataUrl,
+			imagePayload,
 		};
 	}
 
-	private async buildImageDataUrl(
+	private async buildImagePayload(
 		assetPath: string
-	): Promise<string | undefined> {
-		const file = this.app.vault.getAbstractFileByPath(assetPath);
-		if (
-			!file ||
-			!("extension" in file) ||
-			typeof file.extension !== "string"
-		) {
-			return undefined;
-		}
-
-		try {
-			const buffer = await this.app.vault.readBinary(file as any);
-			return arrayBufferToDataUrl(
-				buffer,
-				imageMimeTypeFromExtension(file.extension)
-			);
-		} catch {
-			return undefined;
-		}
+	): Promise<BinaryImagePayload | undefined> {
+		return tryLoadVaultImagePayload(this.app, assetPath);
 	}
 
 	/**

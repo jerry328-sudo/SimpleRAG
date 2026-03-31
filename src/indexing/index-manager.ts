@@ -12,8 +12,11 @@ import { extractImageReferences } from "./links/image-reference-resolver";
 import { getIndexMode } from "../settings/types";
 import { hashBytes, hashText } from "../utils/hash";
 import { VaultScanner } from "./scanner";
-import { arrayBufferToDataUrl } from "../utils/base64";
-import { imageMimeTypeFromPath } from "../utils/mime";
+import {
+	getImageMimeTypeForPath,
+	getVaultImageFile,
+	loadVaultImageData,
+} from "../media/image-loader";
 
 /**
  * Orchestrates the indexing pipeline: reading dirty files, chunking,
@@ -175,7 +178,7 @@ export class IndexManager {
 				if (!existing) {
 					this.db.upsertAsset({
 						asset_path: ref.asset_path,
-						mime_type: imageMimeTypeFromPath(ref.asset_path),
+						mime_type: getImageMimeTypeForPath(ref.asset_path),
 						reference_count: 0,
 						indexed_at_ms: null,
 					});
@@ -267,28 +270,16 @@ export class IndexManager {
 			if (existing && !shouldReindex) continue;
 
 			try {
-				// Read image as base64
-				const file = this.app.vault.getAbstractFileByPath(
+				const loadedImage = await loadVaultImageData(
+					this.app,
 					asset.asset_path
 				);
-				if (
-					!file ||
-					!("extension" in file) ||
-					typeof file.extension !== "string" ||
-					!("stat" in file)
-				) {
+				if (!loadedImage.file.stat) {
 					this.cleanupAssetFile(asset.asset_path);
 					continue;
 				}
-				const assetFile = file as typeof file & {
-					extension: string;
-					stat: { mtime: number; size: number };
-				};
 
-				const arrayBuffer = await this.app.vault.readBinary(
-					assetFile as any
-				);
-				const bytes = new Uint8Array(arrayBuffer);
+				const bytes = new Uint8Array(loadedImage.buffer);
 				const contentHash = hashBytes(bytes);
 
 				if (shouldReindex) {
@@ -296,12 +287,7 @@ export class IndexManager {
 				}
 
 				const response = await this.embeddingProvider.embed({
-					images: [
-						arrayBufferToDataUrl(
-							arrayBuffer,
-							imageMimeTypeFromPath(asset.asset_path)
-						),
-					],
+					images: [loadedImage.payload],
 				});
 
 				if (response.vectors[0]) {
@@ -327,9 +313,9 @@ export class IndexManager {
 				this.db.upsertFile({
 					path: asset.asset_path,
 					kind: "asset",
-					ext: "." + assetFile.extension.toLowerCase(),
-					mtime_ms: assetFile.stat.mtime,
-					size_bytes: assetFile.stat.size,
+					ext: "." + loadedImage.file.extension.toLowerCase(),
+					mtime_ms: loadedImage.file.stat.mtime,
+					size_bytes: loadedImage.file.stat.size,
 					content_hash: contentHash,
 					status: "indexed",
 					indexed_at_ms: Date.now(),
@@ -392,19 +378,10 @@ export class IndexManager {
 	}
 
 	private syncAssetFileRecord(assetPath: string): void {
-		const file = this.app.vault.getAbstractFileByPath(assetPath);
-		if (
-			!file ||
-			!("extension" in file) ||
-			typeof file.extension !== "string" ||
-			!("stat" in file)
-		) {
+		const assetFile = getVaultImageFile(this.app, assetPath);
+		if (!assetFile || !assetFile.stat) {
 			return;
 		}
-		const assetFile = file as typeof file & {
-			extension: string;
-			stat: { mtime: number; size: number };
-		};
 
 		const existing = this.db.getFile(assetPath);
 		const currentEmbedding = this.db.getEmbedding(

@@ -1,3 +1,5 @@
+import type { BinaryImagePayload } from "../types/media";
+
 export function arrayBufferToBase64(buffer: ArrayBuffer): string {
 	const bytes = new Uint8Array(buffer);
 	let binary = "";
@@ -16,6 +18,20 @@ export function arrayBufferToDataUrl(
 	mimeType: string
 ): string {
 	return toDataUrl(arrayBufferToBase64(buffer), mimeType);
+}
+
+export function arrayBufferToImagePayload(
+	buffer: ArrayBuffer,
+	mimeType: string
+): BinaryImagePayload {
+	return {
+		mimeType,
+		base64Data: arrayBufferToBase64(buffer),
+	};
+}
+
+export function imagePayloadToDataUrl(payload: BinaryImagePayload): string {
+	return toDataUrl(payload.base64Data, payload.mimeType);
 }
 
 export function parseDataUrl(value: string):

@@ -5,6 +5,7 @@ import type {
 	EmbeddingResponse,
 } from "../types";
 import { requestWithRetry } from "../request";
+import { imagePayloadToDataUrl } from "../../utils/base64";
 
 export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
 	readonly capability: EmbeddingCapability;
@@ -44,9 +45,8 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
 		}
 
 		if (request.images && this.capability.supportsImage) {
-			// For multimodal models, images are sent as data URIs
 			for (const img of request.images) {
-				inputs.push(img);
+				inputs.push(imagePayloadToDataUrl(img));
 			}
 		}
 

@@ -7,11 +7,20 @@ import {
 } from "obsidian";
 import type SimpleRAGPlugin from "../main";
 import { getIndexMode } from "./types";
-import { ProviderRegistry } from "../providers/registry";
+import {
+	CHAT_PROVIDERS,
+	EMBEDDING_PROVIDERS,
+	RERANK_PROVIDERS,
+	applyChatProviderDefaults,
+	applyEmbeddingProviderDefaults,
+	getChatProviderOption,
+	getEmbeddingProviderOption,
+	getRecommendedEmbeddingModel,
+	syncEmbeddingModelToCurrentMode,
+} from "../providers/catalog";
 
 export class SimpleRAGSettingTab extends PluginSettingTab {
 	plugin: SimpleRAGPlugin;
-	private registry = new ProviderRegistry();
 
 	constructor(app: App, plugin: SimpleRAGPlugin) {
 		super(app, plugin);
@@ -21,10 +30,10 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 	display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
-		const selectedEmbeddingProvider = this.registry.getEmbeddingProviderOption(
+		const selectedEmbeddingProvider = getEmbeddingProviderOption(
 			this.plugin.settings.embeddingProvider
 		);
-		const selectedChatProvider = this.registry.getChatProviderOption(
+		const selectedChatProvider = getChatProviderOption(
 			this.plugin.settings.chatProvider
 		);
 
@@ -35,7 +44,7 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 			.setName("Embedding provider")
 			.setDesc("Provider used to generate embeddings")
 			.addDropdown((dropdown) => {
-				for (const option of this.registry.listEmbeddingProviders()) {
+				for (const option of EMBEDDING_PROVIDERS) {
 					dropdown.addOption(option.id, option.label);
 				}
 				dropdown
@@ -44,7 +53,8 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 						const previousProvider =
 							this.plugin.settings.embeddingProvider;
 						this.plugin.settings.embeddingProvider = value;
-						this.applyEmbeddingProviderDefaults(
+						applyEmbeddingProviderDefaults(
+							this.plugin.settings,
 							previousProvider,
 							value
 						);
@@ -75,7 +85,7 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 			.addText((text) =>
 				text
 					.setPlaceholder(
-						this.getRecommendedEmbeddingModel(
+						getRecommendedEmbeddingModel(
 							this.plugin.settings.embeddingProvider,
 							this.plugin.settings.enableImageEmbedding
 						)
@@ -116,7 +126,7 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.enableImageEmbedding)
 					.onChange(async (value) => {
 						this.plugin.settings.enableImageEmbedding = value;
-						this.syncEmbeddingModelToCurrentMode();
+						syncEmbeddingModelToCurrentMode(this.plugin.settings);
 						await this.plugin.saveSettings();
 						this.display();
 						this.showRebuildWarning(this.containerEl);
@@ -231,7 +241,7 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 		new Setting(advancedDetails)
 			.setName("Rerank provider")
 			.addDropdown((dropdown) => {
-				for (const option of this.registry.listRerankProviders()) {
+				for (const option of RERANK_PROVIDERS) {
 					dropdown.addOption(option.id, option.label);
 				}
 				dropdown
@@ -307,7 +317,7 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 		new Setting(advancedDetails)
 			.setName("Chat provider")
 			.addDropdown((dropdown) => {
-				for (const option of this.registry.listChatProviders()) {
+				for (const option of CHAT_PROVIDERS) {
 					dropdown.addOption(option.id, option.label);
 				}
 				dropdown
@@ -315,7 +325,11 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 					.onChange(async (value) => {
 						const previousProvider = this.plugin.settings.chatProvider;
 						this.plugin.settings.chatProvider = value;
-						this.applyChatProviderDefaults(previousProvider, value);
+						applyChatProviderDefaults(
+							this.plugin.settings,
+							previousProvider,
+							value
+						);
 						await this.plugin.saveSettings();
 						this.display();
 					});
@@ -564,97 +578,6 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 		});
 	}
 
-	private getRecommendedEmbeddingModel(
-		providerId: string,
-		enableImageEmbedding: boolean
-	): string {
-		const option = this.registry.getEmbeddingProviderOption(providerId);
-		if (!option) {
-			return "";
-		}
-
-		if (enableImageEmbedding) {
-			return option.multimodalModel ?? option.defaultModel ?? "";
-		}
-
-		return option.defaultModel ?? option.multimodalModel ?? "";
-	}
-
-	private syncEmbeddingModelToCurrentMode(): void {
-		const option = this.registry.getEmbeddingProviderOption(
-			this.plugin.settings.embeddingProvider
-		);
-		if (!option) {
-			return;
-		}
-
-		const currentModel = this.plugin.settings.embeddingModel.trim();
-		const knownDefaults = new Set(
-			[option.defaultModel, option.multimodalModel].filter(Boolean)
-		);
-		if (!currentModel || knownDefaults.has(currentModel)) {
-			this.plugin.settings.embeddingModel = this.getRecommendedEmbeddingModel(
-				this.plugin.settings.embeddingProvider,
-				this.plugin.settings.enableImageEmbedding
-			);
-		}
-	}
-
-	private applyEmbeddingProviderDefaults(
-		previousProviderId: string,
-		nextProviderId: string
-	): void {
-		const previous = this.registry.getEmbeddingProviderOption(
-			previousProviderId
-		);
-		const next = this.registry.getEmbeddingProviderOption(nextProviderId);
-		if (!next) {
-			return;
-		}
-
-		if (
-			!this.plugin.settings.embeddingBaseUrl.trim() ||
-			this.plugin.settings.embeddingBaseUrl === previous?.defaultBaseUrl
-		) {
-			this.plugin.settings.embeddingBaseUrl = next.defaultBaseUrl ?? "";
-		}
-
-		const currentModel = this.plugin.settings.embeddingModel.trim();
-		const previousDefaults = new Set(
-			[previous?.defaultModel, previous?.multimodalModel].filter(Boolean)
-		);
-		if (!currentModel || previousDefaults.has(currentModel)) {
-			this.plugin.settings.embeddingModel = this.getRecommendedEmbeddingModel(
-				nextProviderId,
-				this.plugin.settings.enableImageEmbedding
-			);
-		}
-	}
-
-	private applyChatProviderDefaults(
-		previousProviderId: string,
-		nextProviderId: string
-	): void {
-		const previous = this.registry.getChatProviderOption(previousProviderId);
-		const next = this.registry.getChatProviderOption(nextProviderId);
-		if (!next) {
-			return;
-		}
-
-		if (
-			!this.plugin.settings.chatBaseUrl.trim() ||
-			this.plugin.settings.chatBaseUrl === previous?.defaultBaseUrl
-		) {
-			this.plugin.settings.chatBaseUrl = next.defaultBaseUrl ?? "";
-		}
-
-		if (
-			!this.plugin.settings.chatModel.trim() ||
-			this.plugin.settings.chatModel === previous?.defaultModel
-		) {
-			this.plugin.settings.chatModel = next.defaultModel ?? "";
-		}
-	}
 }
 
 class ConfirmActionModal extends Modal {

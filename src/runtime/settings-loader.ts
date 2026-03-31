@@ -8,6 +8,7 @@ import { getConfigPath } from "./paths";
 export interface SettingsLoadResult {
 	settings: SimpleRAGSettings;
 	warnings: string[];
+	shouldPersist: boolean;
 }
 
 export async function loadValidatedSettings(
@@ -20,6 +21,7 @@ export async function loadValidatedSettings(
 		return {
 			settings: { ...DEFAULT_SETTINGS },
 			warnings: [],
+			shouldPersist: false,
 		};
 	}
 
@@ -34,6 +36,7 @@ export async function loadValidatedSettings(
 				warnings: [
 					`SimpleRAG settings were invalid and moved to ${backupPath}. Default settings were loaded instead.`,
 				],
+				shouldPersist: true,
 			};
 		}
 
@@ -43,6 +46,7 @@ export async function loadValidatedSettings(
 				...parsed,
 			},
 			warnings: [],
+			shouldPersist: false,
 		};
 	} catch {
 		const backupPath = await quarantineFile(adapter, configPath);
@@ -51,6 +55,7 @@ export async function loadValidatedSettings(
 			warnings: [
 				`SimpleRAG settings could not be parsed and were moved to ${backupPath}. Default settings were loaded instead.`,
 			],
+			shouldPersist: true,
 		};
 	}
 }

@@ -207,6 +207,6 @@ export class GeminiChatProvider implements ChatProvider {
 			return { text: part.text };
 		}
 
-		return buildGeminiInlineDataPart(part.image_url.url);
+		return buildGeminiInlineDataPart(part.image);
 	}
 }

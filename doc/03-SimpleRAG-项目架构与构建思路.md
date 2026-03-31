@@ -47,10 +47,14 @@
 
 - `main.ts`
   - 负责插件生命周期、命令注册、视图注册、模块组装
+- `application`
+  - 负责把 UI 请求编排成索引、搜索、聊天等业务动作
 - `settings`
   - 负责配置定义与设置页
 - `runtime`
   - 负责运行时路径与瞬时状态
+- `media`
+  - 负责把 vault 内图片统一转成业务层可消费的二进制载荷
 - `providers`
   - 负责远端模型 API 抽象
 - `storage`
@@ -85,13 +89,19 @@ Obsidian Vault
 ```text
 src/
   main.ts
+  application/
+    simple-rag-service.ts
   settings/
     tab.ts
     types.ts
   runtime/
     paths.ts
     state.ts
+    vault-change-tracker.ts
+  media/
+    image-loader.ts
   providers/
+    catalog.ts
     gemini.ts
     registry.ts
     request.ts
@@ -133,7 +143,8 @@ src/
 这套结构有两个核心原则：
 
 1. `main.ts` 只做组装，不做重逻辑
-2. 索引、搜索、聊天三条链路尽量彼此解耦
+2. UI 只调用应用服务，不直接编排 provider 或数据库
+3. 索引、搜索、聊天三条链路尽量彼此解耦
 
 ---
 
@@ -145,6 +156,7 @@ src/
 
 - `loadSettings()`
 - 初始化数据库
+- 初始化应用服务
 - 注册侧边栏 View
 - 注册 Ribbon 和命令
 - 注册 vault 事件监听
@@ -163,10 +175,30 @@ src/
 - 不自己请求 embedding API
 - 不自己做向量搜索
 - 不自己拼聊天上下文
+- 不自己决定 provider 如何实例化
 
 这使得后续替换某条链路时，不需要在入口文件里做大改。
 
-### 5.2 为什么这样组装
+### 5.2 `application/simple-rag-service.ts`
+
+[`src/application/simple-rag-service.ts`](E:/code/GitHub/Obsidian/SimpleRAG/src/application/simple-rag-service.ts) 是当前最重要的新边界层。
+
+它负责：
+
+- 统一校验当前 settings 是否可执行
+- 创建 embedding / rerank / chat provider
+- 组装 `scanner / index-manager / query-service / conversation-service`
+- 向 `main.ts` 暴露稳定的应用级接口
+
+这样一来，`main.ts` 和 UI 不需要知道：
+
+- provider 怎么构造
+- 搜索链路内部怎么拼
+- 数据库里该查哪几张表
+
+这层的意义是把“插件入口”和“业务编排”真正分开。
+
+### 5.3 为什么这样组装
 
 因为 Obsidian 插件入口天然只有一个 `Plugin` 子类，如果把业务逻辑全塞进去，后续会很快失控。
 
@@ -218,7 +250,18 @@ src/
 
 两者相关，但不是完全同一层概念。
 
-### 6.3 启动前数据校验
+### 6.3 Vault 事件跟踪
+
+[`src/runtime/vault-change-tracker.ts`](E:/code/GitHub/Obsidian/SimpleRAG/src/runtime/vault-change-tracker.ts) 负责：
+
+- 注册 `create / modify / delete / rename` 监听
+- 按当前 settings 判断是否跟踪该扩展名
+- 把路径标记进 `RuntimeState.dirtyFiles`
+
+它的意义是把 `main.ts` 里那组重复事件监听和扩展名判断抽走。  
+这样后续如果变更索引范围，不需要再去入口文件里改一遍监听逻辑。
+
+### 6.4 启动前数据校验
 
 当前启动流程已经补上了一条“防坏数据覆盖”的保护链路：
 
@@ -226,6 +269,7 @@ src/
 - 本地索引文件在加载前先做存在性与 schema 校验
 - 如果发现文件损坏或结构非法，不会直接把坏文件当成空文件覆盖
 - 原文件会被移动到同目录下的 `.corrupt-时间戳` 备份文件
+- 如果配置文件被隔离并回退到默认值，插件会立即把当前生效配置重新写回 `data.json`
 - 插件会通过 `Notice` 和控制台警告提示用户
 
 这条链路的目的不是自动修复坏数据，而是：
@@ -321,11 +365,31 @@ src/
 - 设置页可以根据 capability 做校验
 - 后续新增 provider 时不会污染上层代码
 
-### 8.3 `providers/registry.ts`
+### 8.3 `providers/catalog.ts`
+
+[`src/providers/catalog.ts`](E:/code/GitHub/Obsidian/SimpleRAG/src/providers/catalog.ts) 现在是 provider 元数据单一来源。
+
+它负责：
+
+- 声明可选 provider 列表
+- 声明默认 Base URL / 默认模型 / 多模态模型
+- 声明 provider 特定 settings 校验
+- 声明 provider 的构造函数
+- 提供设置页使用的默认值同步逻辑
+
+这层存在后，新增 provider 的主要落点变成：
+
+1. 新增具体 provider 实现
+2. 在 `catalog.ts` 注册
+3. 更新测试和文档
+
+而不需要再同时在 `registry.ts` 和设置页里手抄一遍 provider 元数据。
+
+### 8.4 `providers/registry.ts`
 
 [`src/providers/registry.ts`](E:/code/GitHub/Obsidian/SimpleRAG/src/providers/registry.ts) 当前负责：
 
-- 列出可选 provider
+- 基于 `catalog.ts` 提供统一工厂接口
 - 校验当前 settings
 - 根据 settings 构造 provider 实例
 
@@ -340,7 +404,7 @@ src/
 2. 在 `registry.ts` 中注册列表和构造逻辑
 3. 不要在 `main.ts`、`query-service.ts`、`conversation-service.ts` 里直接分支判断 provider 名称
 
-### 8.4 `providers/request.ts`
+### 8.5 `providers/request.ts`
 
 [`src/providers/request.ts`](E:/code/GitHub/Obsidian/SimpleRAG/src/providers/request.ts) 是这轮之后非常关键的一层。
 
@@ -357,7 +421,7 @@ src/
 - 后续统一修改网络策略更容易
 - 业务层不用关心请求层细节
 
-### 8.5 为什么 Gemini 走独立 provider
+### 8.6 为什么 Gemini 走独立 provider
 
 当前已经新增：
 
@@ -380,6 +444,14 @@ src/
 - 共享统一的 provider 接口
 - 共享统一的 timeout / retry / streaming 封装
 - 但保留 Gemini 自己的协议转换层
+
+当前 provider 层还做了一次额外收口：
+
+- 业务层只传 `BinaryImagePayload`
+- OpenAI provider 自己把它转成 `image_url`
+- Gemini provider 自己把它转成 `inline_data`
+
+这意味着以后再接第三家多模态 provider，不需要再去搜索、聊天、索引层改图片请求格式。
 
 当前这层还额外承担了一件兼容性工作：
 
@@ -495,6 +567,8 @@ src/
 
 - “扫描”只做轻活
 - “更新索引”才做重活
+- 图片文件读取和二进制载荷转换通过 `media/image-loader.ts` 统一完成
+- 对图片资产的 hash 计算和 embedding 输入尽量复用同一次二进制读取，避免重复 I/O
 
 ### 10.3 为什么 `rebuildIndex()` 必须先清空再扫描
 
@@ -636,6 +710,7 @@ chunk 只是检索单元，不是内容所有权单元。
 
 - `QueryService` 统一处理文本查询和图片查询
 - provider 决定是否支持图片 query embedding
+- 图片查询输入通过 `media/image-loader.ts` 统一转换，不在搜索层拼具体厂商格式
 
 这样可以避免未来出现两套割裂的搜索实现。
 
@@ -719,6 +794,12 @@ chunk 只是检索单元，不是内容所有权单元。
 
 - 如何把图片变成模型能消费的输入
 
+当前具体实现也遵循这一点：
+
+- `ContextBuilder` 只生成通用 `BinaryImagePayload`
+- `ConversationService` 只决定“是否把图片作为上下文带给模型”
+- 真正的协议字段映射仍然在 provider 内部完成
+
 这样职责边界才清楚。
 
 ---
@@ -736,6 +817,14 @@ chunk 只是检索单元，不是内容所有权单元。
 - 聊天区
 
 它目前是一个“功能完整但偏厚”的文件。
+
+但当前它已经遵守一条很重要的新边界：
+
+- 不再直接读取数据库
+- 索引图片列表通过 `plugin.listIndexedAssetPaths()` 获取
+- 搜索、重建、聊天都通过 `main.ts -> application service` 入口触发
+
+也就是说，它现在厚主要是因为 UI 组合多，而不是因为业务逻辑跨层泄漏。
 
 ### 14.2 当前 UI 的实际策略
 
@@ -871,16 +960,18 @@ chunk 只是检索单元，不是内容所有权单元。
 先看：
 
 - `src/providers/types.ts`
+- `src/providers/catalog.ts`
 - `src/providers/registry.ts`
 - `src/providers/request.ts`
 - `src/providers/gemini.ts`
 
-不要直接在 `main.ts` 或 `query-service.ts` 里写 HTTP 逻辑。
+不要直接在 `main.ts` 或 `query-service.ts` 里写 HTTP 逻辑，也不要让 UI 直接依赖 provider 工厂。
 
 ### 17.3 如果你要改“搜索行为”
 
 先看：
 
+- `src/application/simple-rag-service.ts`
 - `src/search/query-service.ts`
 - `src/search/vector-search.ts`
 - `src/ui/views/search-view.ts`
@@ -895,6 +986,7 @@ chunk 只是检索单元，不是内容所有权单元。
 
 先看：
 
+- `src/application/simple-rag-service.ts`
 - `src/chat/context-builder.ts`
 - `src/chat/evidence-selector.ts`
 - `src/chat/conversation-service.ts`
@@ -925,6 +1017,16 @@ chunk 只是检索单元，不是内容所有权单元。
 - `src/types/domain.ts`
 
 存储改动不要从 UI 反推，也不要绕过 `db.ts` 直接操作底层文件。
+
+### 17.7 如果你要改“图片输入处理”
+
+先看：
+
+- `src/types/media.ts`
+- `src/media/image-loader.ts`
+- `src/providers/types.ts`
+
+不要再把 data URL、`image_url`、`inline_data` 这类厂商协议细节直接塞回搜索层或聊天层。
 
 ---
 
@@ -972,6 +1074,16 @@ chunk 只是检索单元，不是内容所有权单元。
 
 拆得更稳。
 
+### 18.5 UI 文件继续拆分
+
+虽然当前 UI 已经不再直接碰数据库和 provider 工厂，但：
+
+- `settings/tab.ts`
+- `ui/views/search-view.ts`
+
+仍然偏大。  
+后续如果继续扩展交互，下一步最自然的演进是把它们拆成更细的 section / panel 组件文件。
+
 ---
 
 ## 19. 架构层面的硬原则
@@ -979,13 +1091,16 @@ chunk 只是检索单元，不是内容所有权单元。
 下次继续开发时，建议始终守住这几条：
 
 1. `main.ts` 只做组装，不做业务核心逻辑。
-2. provider 层只封装外部协议，不承担业务判断。
-3. 存储层必须是索引真相单一来源。
-4. scanner 只做轻量扫描，不做重计算。
-5. index-manager 只在用户显式更新时做重工作。
-6. search 先过滤有效 embedding，再做召回。
-7. chat 只基于搜索结果，不绕过检索。
-8. UI 不直接拼 provider 请求，也不直接改存储真相。
+2. `application` 层负责业务编排，UI 和 `main.ts` 不直接拼搜索/聊天/索引链路。
+3. provider 层只封装外部协议，不承担业务判断。
+4. provider 元数据必须集中在 `providers/catalog.ts`，不要散落到 UI 和工厂两处。
+5. 存储层必须是索引真相单一来源。
+6. scanner 只做轻量扫描，不做重计算。
+7. index-manager 只在用户显式更新时做重工作。
+8. search 先过滤有效 embedding，再做召回。
+9. chat 只基于搜索结果，不绕过检索。
+10. UI 不直接拼 provider 请求，也不直接改存储真相。
+11. 图片二进制载荷在业务层只使用通用 `BinaryImagePayload`，厂商协议转换只留在 provider 内部。
 
 ---
 

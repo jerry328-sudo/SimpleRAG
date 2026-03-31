@@ -193,10 +193,10 @@ export class ConversationService {
 				type: "text",
 				text: `[${i + 1}] ${packet.type.toUpperCase()} ${packet.path}\n${packet.content}`,
 			});
-			if (packet.type === "image" && packet.imageDataUrl) {
+			if (packet.type === "image" && packet.imagePayload) {
 				parts.push({
-					type: "image_url",
-					image_url: { url: packet.imageDataUrl },
+					type: "image",
+					image: packet.imagePayload,
 				});
 			}
 		}

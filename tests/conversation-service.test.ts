@@ -95,7 +95,7 @@ describe("ConversationService", () => {
 		);
 		expect(Array.isArray(visionMessage?.content)).toBe(true);
 		expect(
-			visionMessage?.content.some((part: any) => part.type === "image_url")
+			visionMessage?.content.some((part: any) => part.type === "image")
 		).toBe(true);
 		expect(response.references).toHaveLength(1);
 		expect(response.references[0]?.type).toBe("image");

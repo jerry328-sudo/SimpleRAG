@@ -162,9 +162,9 @@ export class SimpleRAGView extends ItemView {
 			const datalist = imageRow.createEl("datalist", {
 				attr: { id: datalistId },
 			});
-			for (const asset of this.plugin.db.getAllAssets()) {
+			for (const assetPath of this.plugin.listIndexedAssetPaths()) {
 				datalist.createEl("option", {
-					value: asset.asset_path,
+					value: assetPath,
 				});
 			}
 

@@ -22,6 +22,7 @@ describe("startup validation", () => {
 
 		expect(result.settings).toEqual(DEFAULT_SETTINGS);
 		expect(result.warnings).toHaveLength(1);
+		expect(result.shouldPersist).toBe(true);
 		expect(storage.has(configPath)).toBe(false);
 		expect(
 			Array.from(storage.keys()).some((key) =>
