@@ -199,7 +199,7 @@ describe("Gemini provider support", () => {
 		} as any);
 
 		const provider = new GeminiChatProvider(
-			"https://gateway.ai.cloudflare.com/v1/00000000000000000000000000000000/proxy/google-ai-studio",
+			"https://gateway.ai.cloudflare.com/v1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1/proxy/google-ai-studio",
 			"gemini-key",
 			"gemini-2.5-flash",
 			30000,
@@ -212,7 +212,7 @@ describe("Gemini provider support", () => {
 
 		const request = requestSpy.mock.calls[0]?.[0] as any;
 		expect(request.url).toBe(
-			"https://gateway.ai.cloudflare.com/v1/00000000000000000000000000000000/proxy/google-ai-studio/v1beta/models/gemini-2.5-flash:generateContent"
+			"https://gateway.ai.cloudflare.com/v1/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1/proxy/google-ai-studio/v1beta/models/gemini-2.5-flash:generateContent"
 		);
 	});
 
