@@ -8,6 +8,10 @@ export function getPluginDir(plugin: Plugin): string {
 	return `${plugin.app.vault.configDir}/plugins/${manifest.id}`;
 }
 
+export function getConfigPath(plugin: Plugin): string {
+	return `${getPluginDir(plugin)}/data.json`;
+}
+
 export function getStorageDir(plugin: Plugin): string {
 	return `${getPluginDir(plugin)}/storage`;
 }

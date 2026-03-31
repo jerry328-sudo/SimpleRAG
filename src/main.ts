@@ -2,7 +2,7 @@ import { Notice, Plugin } from "obsidian";
 import { DEFAULT_SETTINGS, SimpleRAGSettings, getIndexMode } from "./settings/types";
 import { SimpleRAGSettingTab } from "./settings/tab";
 import { Database } from "./storage/db";
-import { getDbPath, getStorageDir } from "./runtime/paths";
+import { getDbPath } from "./runtime/paths";
 import { RuntimeState } from "./runtime/state";
 import { ProviderRegistry } from "./providers/registry";
 import { VaultScanner } from "./indexing/scanner";
@@ -14,6 +14,7 @@ import {
 	VIEW_TYPE_SIMPLE_RAG,
 } from "./ui/views/search-view";
 import type { SearchResult, IndexStats, ChatReference } from "./types/domain";
+import { loadValidatedSettings } from "./runtime/settings-loader";
 
 const TRACKED_IMAGE_EXTENSIONS = new Set([
 	"png",
@@ -35,7 +36,8 @@ export default class SimpleRAGPlugin extends Plugin {
 		// Initialize database
 		const dbPath = getDbPath(this);
 		this.db = new Database(this.app, dbPath);
-		await this.db.load();
+		const dbWarnings = await this.db.load();
+		dbWarnings.forEach((warning) => this.warnDataIssue(warning));
 
 		// Register the sidebar view
 		this.registerView(VIEW_TYPE_SIMPLE_RAG, (leaf) => {
@@ -147,11 +149,9 @@ export default class SimpleRAGPlugin extends Plugin {
 	}
 
 	async loadSettings(): Promise<void> {
-		this.settings = Object.assign(
-			{},
-			DEFAULT_SETTINGS,
-			(await this.loadData()) as Partial<SimpleRAGSettings>
-		);
+		const result = await loadValidatedSettings(this);
+		this.settings = result.settings;
+		result.warnings.forEach((warning) => this.warnDataIssue(warning));
 	}
 
 	async saveSettings(): Promise<void> {
@@ -464,5 +464,10 @@ export default class SimpleRAGPlugin extends Plugin {
 	private shouldTrackPath(path: string): boolean {
 		const ext = path.split(".").pop()?.toLowerCase();
 		return ext ? this.shouldTrackExtension(ext) : false;
+	}
+
+	private warnDataIssue(message: string): void {
+		console.warn(`[SimpleRAG] ${message}`);
+		new Notice(message, 12000);
 	}
 }

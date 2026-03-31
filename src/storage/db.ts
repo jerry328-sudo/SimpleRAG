@@ -46,18 +46,47 @@ export class Database {
 		this.data = createEmptySchema();
 	}
 
-	async load(): Promise<void> {
+	async load(): Promise<string[]> {
+		const warnings: string[] = [];
+
 		try {
 			const exists = await this.app.vault.adapter.exists(this.dbPath);
 			if (exists) {
 				const raw = await this.app.vault.adapter.read(this.dbPath);
-				const parsed = JSON.parse(raw) as DatabaseSchema;
-				this.data = parsed;
+				const parsed = JSON.parse(raw) as unknown;
+				if (isDatabaseSchema(parsed)) {
+					this.data = parsed;
+				} else {
+					const backupPath = await quarantineFile(
+						this.app.vault.adapter,
+						this.dbPath
+					);
+					this.data = createEmptySchema();
+					warnings.push(
+						`SimpleRAG index data was invalid and moved to ${backupPath}. A new empty index will be created.`
+					);
+				}
 			}
 		} catch {
-			// If file is corrupted or missing, start fresh
 			this.data = createEmptySchema();
+			try {
+				if (await this.app.vault.adapter.exists(this.dbPath)) {
+					const backupPath = await quarantineFile(
+						this.app.vault.adapter,
+						this.dbPath
+					);
+					warnings.push(
+						`SimpleRAG index data could not be parsed and was moved to ${backupPath}. A new empty index will be created.`
+					);
+				}
+			} catch {
+				warnings.push(
+					"SimpleRAG index data could not be parsed. A new empty index was loaded, but the original file could not be backed up automatically."
+				);
+			}
 		}
+
+		return warnings;
 	}
 
 	async save(): Promise<void> {
@@ -270,4 +299,139 @@ export class Database {
 			dirtyFiles: files.filter((f) => f.status === "dirty").length,
 		};
 	}
+}
+
+function isDatabaseSchema(value: unknown): value is DatabaseSchema {
+	if (!isPlainObject(value)) {
+		return false;
+	}
+
+	const record = value as Record<string, unknown>;
+	if (
+		!isPlainObject(record.schema_meta) ||
+		!isPlainObject(record.files) ||
+		!isPlainObject(record.note_chunks) ||
+		!isPlainObject(record.assets) ||
+		!isPlainObject(record.asset_mentions) ||
+		!isPlainObject(record.embeddings)
+	) {
+		return false;
+	}
+
+	if (typeof record.schema_meta.schema_version !== "string") {
+		return false;
+	}
+
+	return (
+		Object.values(record.files).every(isFileRecord) &&
+		Object.values(record.note_chunks).every(isNoteChunk) &&
+		Object.values(record.assets).every(isAssetRecord) &&
+		Object.values(record.asset_mentions).every(isAssetMention) &&
+		Object.values(record.embeddings).every(isEmbeddingRecord)
+	);
+}
+
+async function quarantineFile(
+	adapter: App["vault"]["adapter"],
+	path: string
+): Promise<string> {
+	const backupPath = await nextBackupPath(adapter, path);
+	await adapter.rename(path, backupPath);
+	return backupPath;
+}
+
+async function nextBackupPath(
+	adapter: App["vault"]["adapter"],
+	path: string
+): Promise<string> {
+	const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+	const dotIndex = path.lastIndexOf(".");
+	const base = dotIndex >= 0 ? path.slice(0, dotIndex) : path;
+	const ext = dotIndex >= 0 ? path.slice(dotIndex) : "";
+
+	let attempt = 0;
+	while (true) {
+		const suffix =
+			attempt === 0 ? `.corrupt-${timestamp}` : `.corrupt-${timestamp}-${attempt}`;
+		const candidate = `${base}${suffix}${ext}`;
+		if (!(await adapter.exists(candidate))) {
+			return candidate;
+		}
+		attempt += 1;
+	}
+}
+
+function isFileRecord(value: unknown): boolean {
+	return isPlainObject(value) &&
+		typeof value.path === "string" &&
+		typeof value.kind === "string" &&
+		typeof value.ext === "string" &&
+		typeof value.mtime_ms === "number" &&
+		typeof value.size_bytes === "number" &&
+		isNullableString(value.content_hash) &&
+		typeof value.status === "string" &&
+		isNullableNumber(value.indexed_at_ms) &&
+		isNullableNumber(value.last_seen_scan_ms) &&
+		isNullableString(value.last_error);
+}
+
+function isNoteChunk(value: unknown): boolean {
+	return isPlainObject(value) &&
+		typeof value.chunk_id === "string" &&
+		typeof value.note_path === "string" &&
+		typeof value.chunk_index === "number" &&
+		typeof value.heading_path_json === "string" &&
+		typeof value.heading_path_text === "string" &&
+		typeof value.text === "string" &&
+		typeof value.text_for_embedding === "string" &&
+		isNullableNumber(value.char_start) &&
+		isNullableNumber(value.char_end) &&
+		isNullableNumber(value.token_estimate);
+}
+
+function isAssetRecord(value: unknown): boolean {
+	return isPlainObject(value) &&
+		typeof value.asset_path === "string" &&
+		isNullableString(value.mime_type) &&
+		typeof value.reference_count === "number" &&
+		isNullableNumber(value.indexed_at_ms);
+}
+
+function isAssetMention(value: unknown): boolean {
+	return isPlainObject(value) &&
+		typeof value.mention_id === "string" &&
+		typeof value.asset_path === "string" &&
+		typeof value.note_path === "string" &&
+		typeof value.mention_index === "number" &&
+		typeof value.heading_path_json === "string" &&
+		typeof value.heading_path_text === "string" &&
+		typeof value.raw_target === "string" &&
+		typeof value.link_kind === "string" &&
+		isNullableString(value.surrounding_text) &&
+		isNullableString(value.near_chunk_id);
+}
+
+function isEmbeddingRecord(value: unknown): boolean {
+	return isPlainObject(value) &&
+		typeof value.owner_id === "string" &&
+		typeof value.owner_type === "string" &&
+		typeof value.provider_id === "string" &&
+		typeof value.model_id === "string" &&
+		typeof value.modality === "string" &&
+		typeof value.dimension === "number" &&
+		Array.isArray(value.vector) &&
+		value.vector.every((item) => typeof item === "number") &&
+		typeof value.created_at_ms === "number";
+}
+
+function isPlainObject(value: unknown): value is Record<string, any> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNullableString(value: unknown): boolean {
+	return value === null || typeof value === "string";
+}
+
+function isNullableNumber(value: unknown): boolean {
+	return value === null || typeof value === "number";
 }

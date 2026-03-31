@@ -62,6 +62,24 @@ export function createMockApp(initialFiles: Record<string, MockFileSpec> = {}) {
 		async write(path: string, content: string) {
 			storage.set(path, content);
 		},
+		async rename(path: string, newPath: string) {
+			const value = storage.get(path);
+			if (value == null) {
+				throw new Error(`No file at ${path}`);
+			}
+			storage.delete(path);
+			storage.set(newPath, value);
+		},
+		async copy(path: string, newPath: string) {
+			const value = storage.get(path);
+			if (value == null) {
+				throw new Error(`No file at ${path}`);
+			}
+			storage.set(newPath, value);
+		},
+		async remove(path: string) {
+			storage.delete(path);
+		},
 		async mkdir(_path: string) {
 			// noop for in-memory adapter
 		},
@@ -69,6 +87,7 @@ export function createMockApp(initialFiles: Record<string, MockFileSpec> = {}) {
 
 	const vault = {
 		adapter,
+		configDir: ".obsidian",
 		getFiles() {
 			return Array.from(files.values());
 		},
