@@ -72,10 +72,9 @@ export class ConversationService {
 		// Build references from packets
 		const references: ChatReference[] = packets.map((p, i) => ({
 			index: i + 1,
-			type: "note" as const,
-			path: p.notePath,
-			headingPath:
-				p.chunks[0]?.heading_path_text ?? "",
+			type: p.type,
+			path: p.path,
+			headingPath: p.headingPath,
 			snippet:
 				p.content.length > 200
 					? p.content.slice(0, 200) + "…"
@@ -127,10 +126,9 @@ export class ConversationService {
 
 		return packets.map((p, i) => ({
 			index: i + 1,
-			type: "note" as const,
-			path: p.notePath,
-			headingPath:
-				p.chunks[0]?.heading_path_text ?? "",
+			type: p.type,
+			path: p.path,
+			headingPath: p.headingPath,
 			snippet:
 				p.content.length > 200
 					? p.content.slice(0, 200) + "…"

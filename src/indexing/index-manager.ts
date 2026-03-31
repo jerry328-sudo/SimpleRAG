@@ -74,8 +74,13 @@ export class IndexManager {
 		// Handle deleted files
 		const deletedFiles = this.db.getFilesByStatus("deleted");
 		for (const file of deletedFiles) {
-			this.cleanupFile(file.path);
+			if (file.kind === "note") {
+				this.cleanupNoteFile(file.path);
+			} else {
+				this.cleanupAssetFile(file.path);
+			}
 			this.db.deleteFile(file.path);
+			this.state.markClean(file.path);
 		}
 
 		// Handle image assets in multimodal mode
@@ -145,17 +150,14 @@ export class IndexManager {
 		);
 
 		// 3. Clear old data for this note
-		this.db.deleteChunksByNote(notePath);
-		this.db.deleteEmbeddingsByOwner(notePath);
-		this.db.deleteMentionsByNote(notePath);
-
-		// Delete old chunk embeddings
 		const oldChunkIds = this.db
 			.getChunksByNote(notePath)
 			.map((c) => c.chunk_id);
 		for (const id of oldChunkIds) {
 			this.db.deleteEmbeddingsByOwner(id);
 		}
+		this.db.deleteChunksByNote(notePath);
+		this.db.deleteMentionsByNote(notePath);
 
 		// 4. Store new chunks
 		for (const chunk of chunks) {
@@ -165,23 +167,26 @@ export class IndexManager {
 		// 5. Generate embeddings in batches
 		await this.embedChunks(chunks);
 
-		// 6. Store image references
-		for (const ref of imageRefs) {
-			this.db.upsertMention(ref);
-			// Ensure asset record exists
-			const existing = this.db.getAsset(ref.asset_path);
-			if (!existing) {
-				this.db.upsertAsset({
-					asset_path: ref.asset_path,
-					mime_type: guessMimeType(ref.asset_path),
-					reference_count: 0,
-					indexed_at_ms: null,
-				});
+		// 6. Store image references in multimodal mode
+		if (getIndexMode(this.settings) === "multimodal") {
+			for (const ref of imageRefs) {
+				this.db.upsertMention(ref);
+				// Ensure asset record exists
+				const existing = this.db.getAsset(ref.asset_path);
+				if (!existing) {
+					this.db.upsertAsset({
+						asset_path: ref.asset_path,
+						mime_type: guessMimeType(ref.asset_path),
+						reference_count: 0,
+						indexed_at_ms: null,
+					});
+				}
+				this.syncAssetFileRecord(ref.asset_path);
 			}
-		}
 
-		// Update reference counts
-		this.updateAssetReferenceCounts();
+			// Update reference counts
+			this.updateAssetReferenceCounts();
+		}
 
 		// 7. Mark file as indexed
 		const fileRecord = this.db.getFile(notePath);
@@ -237,6 +242,9 @@ export class IndexManager {
 		for (const asset of assets) {
 			if (asset.reference_count === 0) continue;
 
+			const fileRecord = this.db.getFile(asset.asset_path);
+			const shouldReindex = fileRecord?.status === "dirty";
+
 			// Check if already has embedding
 			const existing = this.db.getEmbedding(
 				asset.asset_path,
@@ -244,19 +252,35 @@ export class IndexManager {
 				this.settings.embeddingProvider,
 				this.settings.embeddingModel
 			);
-			if (existing) continue;
+			if (existing && !shouldReindex) continue;
 
 			try {
 				// Read image as base64
 				const file = this.app.vault.getAbstractFileByPath(
 					asset.asset_path
 				);
-				if (!file || !("extension" in file)) continue;
+				if (
+					!file ||
+					!("extension" in file) ||
+					typeof file.extension !== "string" ||
+					!("stat" in file)
+				) {
+					this.cleanupAssetFile(asset.asset_path);
+					continue;
+				}
+				const assetFile = file as typeof file & {
+					extension: string;
+					stat: { mtime: number; size: number };
+				};
 
 				const arrayBuffer = await this.app.vault.readBinary(
-					file as any
+					assetFile as any
 				);
 				const base64 = arrayBufferToBase64(arrayBuffer);
+
+				if (shouldReindex) {
+					this.db.deleteEmbeddingsByOwner(asset.asset_path);
+				}
 
 				const response = await this.embeddingProvider.embed({
 					images: [base64],
@@ -279,7 +303,32 @@ export class IndexManager {
 						indexed_at_ms: Date.now(),
 					});
 				}
+
+				const currentFileRecord = this.db.getFile(asset.asset_path);
+				this.db.upsertFile({
+					path: asset.asset_path,
+					kind: "asset",
+					ext: "." + assetFile.extension.toLowerCase(),
+					mtime_ms: assetFile.stat.mtime,
+					size_bytes: assetFile.stat.size,
+					content_hash: currentFileRecord?.content_hash ?? null,
+					status: "indexed",
+					indexed_at_ms: Date.now(),
+					last_seen_scan_ms:
+						currentFileRecord?.last_seen_scan_ms ?? Date.now(),
+					last_error: null,
+				});
+				this.state.markClean(asset.asset_path);
 			} catch (e) {
+				const errorMsg = e instanceof Error ? e.message : String(e);
+				const currentFileRecord = this.db.getFile(asset.asset_path);
+				if (currentFileRecord) {
+					this.db.upsertFile({
+						...currentFileRecord,
+						status: "error",
+						last_error: errorMsg,
+					});
+				}
 				console.error(
 					`[SimpleRAG] Error indexing asset ${asset.asset_path}:`,
 					e
@@ -288,7 +337,7 @@ export class IndexManager {
 		}
 	}
 
-	private cleanupFile(path: string): void {
+	private cleanupNoteFile(path: string): void {
 		// Remove chunks and their embeddings
 		const chunks = this.db.getChunksByNote(path);
 		for (const chunk of chunks) {
@@ -298,12 +347,20 @@ export class IndexManager {
 		this.db.deleteMentionsByNote(path);
 	}
 
+	private cleanupAssetFile(path: string): void {
+		this.db.deleteEmbeddingsByOwner(path);
+		this.db.deleteMentionsByAsset(path);
+		this.db.deleteAsset(path);
+	}
+
 	private cleanOrphanedAssets(): void {
 		for (const asset of this.db.getAllAssets()) {
 			const mentions = this.db.getMentionsByAsset(asset.asset_path);
 			if (mentions.length === 0) {
 				this.db.deleteEmbeddingsByOwner(asset.asset_path);
 				this.db.deleteAsset(asset.asset_path);
+				this.db.deleteFile(asset.asset_path);
+				this.state.markClean(asset.asset_path);
 			}
 		}
 	}
@@ -313,6 +370,48 @@ export class IndexManager {
 			const count = this.db.getMentionsByAsset(asset.asset_path).length;
 			this.db.upsertAsset({ ...asset, reference_count: count });
 		}
+	}
+
+	private syncAssetFileRecord(assetPath: string): void {
+		const file = this.app.vault.getAbstractFileByPath(assetPath);
+		if (
+			!file ||
+			!("extension" in file) ||
+			typeof file.extension !== "string" ||
+			!("stat" in file)
+		) {
+			return;
+		}
+		const assetFile = file as typeof file & {
+			extension: string;
+			stat: { mtime: number; size: number };
+		};
+
+		const existing = this.db.getFile(assetPath);
+		const currentEmbedding = this.db.getEmbedding(
+			assetPath,
+			"asset",
+			this.settings.embeddingProvider,
+			this.settings.embeddingModel
+		);
+		const needsEmbedding =
+			!currentEmbedding ||
+			!existing ||
+			existing.mtime_ms !== assetFile.stat.mtime ||
+			existing.size_bytes !== assetFile.stat.size;
+
+		this.db.upsertFile({
+			path: assetPath,
+			kind: "asset",
+			ext: "." + assetFile.extension.toLowerCase(),
+			mtime_ms: assetFile.stat.mtime,
+			size_bytes: assetFile.stat.size,
+			content_hash: existing?.content_hash ?? null,
+			status: needsEmbedding ? "dirty" : "indexed",
+			indexed_at_ms: existing?.indexed_at_ms ?? null,
+			last_seen_scan_ms: existing?.last_seen_scan_ms ?? Date.now(),
+			last_error: null,
+		});
 	}
 }
 

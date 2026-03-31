@@ -1,6 +1,6 @@
 import type { App, TFile } from "obsidian";
 import type { Database } from "../storage/db";
-import type { FileRecord } from "../types/domain";
+import type { SimpleRAGSettings } from "../settings/types";
 
 /**
  * Scans the vault for Markdown and image files, comparing with database records
@@ -9,10 +9,12 @@ import type { FileRecord } from "../types/domain";
 export class VaultScanner {
 	private app: App;
 	private db: Database;
+	private settings: SimpleRAGSettings;
 
-	constructor(app: App, db: Database) {
+	constructor(app: App, db: Database, settings: SimpleRAGSettings) {
 		this.app = app;
 		this.db = db;
+		this.settings = settings;
 	}
 
 	/**
@@ -31,12 +33,20 @@ export class VaultScanner {
 
 		const now = Date.now();
 
+		const trackedAssetPaths = new Set(
+			this.settings.enableImageEmbedding
+				? this.db
+						.getFilesByKind("asset")
+						.map((file) => file.path)
+				: []
+		);
+
 		// Gather all vault files
 		const vaultFiles = this.app.vault.getFiles();
 		const vaultPaths = new Set<string>();
 
 		for (const file of vaultFiles) {
-			if (!this.isSupported(file)) continue;
+			if (!this.isSupported(file, trackedAssetPaths)) continue;
 
 			const path = file.path;
 			vaultPaths.add(path);
@@ -99,13 +109,14 @@ export class VaultScanner {
 		return { added, modified, deleted };
 	}
 
-	private isSupported(file: TFile): boolean {
+	private isSupported(file: TFile, trackedAssetPaths: Set<string>): boolean {
 		const ext = file.extension.toLowerCase();
 		// Markdown notes
 		if (ext === "md") return true;
-		// Image assets
-		if (["png", "jpg", "jpeg", "webp", "gif"].includes(ext)) return true;
-		return false;
+		// Only track images that are already referenced/indexed when multimodal
+		if (!this.settings.enableImageEmbedding) return false;
+		if (!["png", "jpg", "jpeg", "webp", "gif"].includes(ext)) return false;
+		return trackedAssetPaths.has(file.path);
 	}
 
 	private getFileKind(file: TFile): "note" | "asset" {

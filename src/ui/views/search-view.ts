@@ -120,6 +120,7 @@ export class SimpleRAGView extends ItemView {
 			try {
 				this.searchResults = await this.plugin.search(query);
 				this.chatHistory = [];
+				this.currentReferences = [];
 				this.render();
 			} catch (e) {
 				const msg =

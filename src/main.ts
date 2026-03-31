@@ -15,6 +15,14 @@ import {
 } from "./ui/views/search-view";
 import type { SearchResult, IndexStats, ChatReference } from "./types/domain";
 
+const TRACKED_IMAGE_EXTENSIONS = new Set([
+	"png",
+	"jpg",
+	"jpeg",
+	"webp",
+	"gif",
+]);
+
 export default class SimpleRAGPlugin extends Plugin {
 	settings: SimpleRAGSettings = DEFAULT_SETTINGS;
 	db!: Database;
@@ -79,7 +87,11 @@ export default class SimpleRAGPlugin extends Plugin {
 		// Listen for vault events
 		this.registerEvent(
 			this.app.vault.on("create", (file) => {
-				if ("extension" in file && file.extension === "md") {
+				if (
+					"extension" in file &&
+					typeof file.extension === "string" &&
+					this.shouldTrackExtension(file.extension)
+				) {
 					this.state.markDirty(file.path);
 				}
 			})
@@ -87,7 +99,11 @@ export default class SimpleRAGPlugin extends Plugin {
 
 		this.registerEvent(
 			this.app.vault.on("modify", (file) => {
-				if ("extension" in file && file.extension === "md") {
+				if (
+					"extension" in file &&
+					typeof file.extension === "string" &&
+					this.shouldTrackExtension(file.extension)
+				) {
 					this.state.markDirty(file.path);
 				}
 			})
@@ -95,14 +111,26 @@ export default class SimpleRAGPlugin extends Plugin {
 
 		this.registerEvent(
 			this.app.vault.on("delete", (file) => {
-				this.state.markDirty(file.path);
+				if (
+					"extension" in file &&
+					typeof file.extension === "string" &&
+					this.shouldTrackExtension(file.extension)
+				) {
+					this.state.markDirty(file.path);
+				}
 			})
 		);
 
 		this.registerEvent(
 			this.app.vault.on("rename", (file, oldPath) => {
-				this.state.markDirty(oldPath);
-				if ("extension" in file && file.extension === "md") {
+				if (this.shouldTrackPath(oldPath)) {
+					this.state.markDirty(oldPath);
+				}
+				if (
+					"extension" in file &&
+					typeof file.extension === "string" &&
+					this.shouldTrackExtension(file.extension)
+				) {
 					this.state.markDirty(file.path);
 				}
 			})
@@ -137,7 +165,7 @@ export default class SimpleRAGPlugin extends Plugin {
 		this.state.isScanning = true;
 
 		try {
-			const scanner = new VaultScanner(this.app, this.db);
+			const scanner = new VaultScanner(this.app, this.db, this.settings);
 			const result = await scanner.scan();
 
 			// Merge scanner-found dirty files with runtime state
@@ -366,5 +394,19 @@ export default class SimpleRAGPlugin extends Plugin {
 				view.refresh();
 			}
 		}
+	}
+
+	private shouldTrackExtension(extension: string): boolean {
+		const ext = extension.toLowerCase();
+		if (ext === "md") return true;
+		return (
+			this.settings.enableImageEmbedding &&
+			TRACKED_IMAGE_EXTENSIONS.has(ext)
+		);
+	}
+
+	private shouldTrackPath(path: string): boolean {
+		const ext = path.split(".").pop()?.toLowerCase();
+		return ext ? this.shouldTrackExtension(ext) : false;
 	}
 }

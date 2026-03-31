@@ -3,6 +3,7 @@ import type { SimpleRAGSettings } from "../settings/types";
 import type { EmbeddingProvider, RerankProvider } from "../providers/types";
 import type { SearchResult } from "../types/domain";
 import { vectorSearch } from "./vector-search";
+import { getIndexMode } from "../settings/types";
 
 /**
  * Orchestrates the search pipeline: query embedding → vector recall → optional rerank → result assembly.
@@ -40,7 +41,7 @@ export class QueryService {
 		}
 
 		// 2. Vector recall
-		const allEmbeddings = this.db.getAllEmbeddings();
+		const allEmbeddings = this.getSearchEmbeddings(queryVector.length);
 		const recallSize = this.settings.recallPoolSize;
 		const matches = vectorSearch(queryVector, allEmbeddings, recallSize);
 
@@ -143,5 +144,24 @@ export class QueryService {
 			console.warn("[SimpleRAG] Rerank failed, falling back to vector scores:", e);
 			return results;
 		}
+	}
+
+	private getSearchEmbeddings(dimension: number) {
+		const indexMode = getIndexMode(this.settings);
+		return this.db.getAllEmbeddings().filter((embedding) => {
+			if (embedding.provider_id !== this.settings.embeddingProvider) {
+				return false;
+			}
+			if (embedding.model_id !== this.settings.embeddingModel) {
+				return false;
+			}
+			if (embedding.dimension !== dimension) {
+				return false;
+			}
+			if (indexMode === "text-only" && embedding.owner_type !== "note_chunk") {
+				return false;
+			}
+			return true;
+		});
 	}
 }

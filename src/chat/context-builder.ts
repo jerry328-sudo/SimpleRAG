@@ -1,13 +1,16 @@
 import type { App } from "obsidian";
 import type { Database } from "../storage/db";
 import type { SimpleRAGSettings } from "../settings/types";
-import type { SearchResult, NoteChunk } from "../types/domain";
+import type { SearchResult, NoteChunk, AssetMention } from "../types/domain";
 import { estimateTokens } from "../indexing/chunking/markdown-parser";
 
-interface DocumentPacket {
-	notePath: string;
+export interface DocumentPacket {
+	type: "note" | "image";
+	path: string;
+	headingPath: string;
 	content: string;
 	chunks: NoteChunk[];
+	mentions: AssetMention[];
 	score: number;
 }
 
@@ -31,13 +34,21 @@ export class ContextBuilder {
 	 * Build context from search results for the chat model.
 	 */
 	async buildContext(results: SearchResult[]): Promise<DocumentPacket[]> {
-		// Group results by note path
+		// Group note results by note path
 		const noteGroups = new Map<
 			string,
 			{ chunks: NoteChunk[]; maxScore: number }
 		>();
+		const imageResults = new Map<string, SearchResult>();
 
 		for (const result of results) {
+			if (result.type === "image" && result.asset) {
+				const existingImage = imageResults.get(result.asset.asset_path);
+				if (!existingImage || existingImage.score < result.score) {
+					imageResults.set(result.asset.asset_path, result);
+				}
+				continue;
+			}
 			if (result.type !== "note" || !result.chunk) continue;
 
 			const existing = noteGroups.get(result.notePath);
@@ -52,22 +63,42 @@ export class ContextBuilder {
 			}
 		}
 
-		// Sort by max score descending
-		const sorted = Array.from(noteGroups.entries()).sort(
-			(a, b) => b[1].maxScore - a[1].maxScore
+		const noteCandidates = Array.from(noteGroups.entries()).map(
+			([notePath, group]) => ({
+				type: "note" as const,
+				key: notePath,
+				score: group.maxScore,
+				chunks: group.chunks,
+			})
+		);
+		const imageCandidates = Array.from(imageResults.values()).map(
+			(result) => ({
+				type: "image" as const,
+				key: result.asset!.asset_path,
+				score: result.score,
+				result,
+			})
 		);
 
-		// Take top N notes
-		const topNotes = sorted.slice(0, this.settings.maxNotesInChatContext);
+		const candidates = [...noteCandidates, ...imageCandidates]
+			.sort((a, b) => b.score - a.score)
+			.slice(0, this.settings.maxNotesInChatContext);
 
 		const packets: DocumentPacket[] = [];
+		for (const candidate of candidates) {
+			if (candidate.type === "note") {
+				const packet = await this.buildNotePacket(
+					candidate.key,
+					candidate.chunks,
+					candidate.score
+				);
+				if (packet) {
+					packets.push(packet);
+				}
+				continue;
+			}
 
-		for (const [notePath, group] of topNotes) {
-			const packet = await this.buildPacket(
-				notePath,
-				group.chunks,
-				group.maxScore
-			);
+			const packet = this.buildImagePacket(candidate.result);
 			if (packet) {
 				packets.push(packet);
 			}
@@ -76,7 +107,7 @@ export class ContextBuilder {
 		return packets;
 	}
 
-	private async buildPacket(
+	private async buildNotePacket(
 		notePath: string,
 		hitChunks: NoteChunk[],
 		score: number
@@ -91,9 +122,12 @@ export class ContextBuilder {
 		if (fullTokens < this.settings.shortNoteThreshold) {
 			// Short note: include full content
 			return {
-				notePath,
+				type: "note",
+				path: notePath,
+				headingPath: hitChunks[0]?.heading_path_text ?? "",
 				content: fullContent,
 				chunks: hitChunks,
+				mentions: [],
 				score,
 			};
 		}
@@ -129,10 +163,47 @@ export class ContextBuilder {
 			.join("\n\n---\n\n");
 
 		return {
-			notePath,
+			type: "note",
+			path: notePath,
+			headingPath: hitChunks[0]?.heading_path_text ?? "",
 			content: excerptContent,
 			chunks: excerptChunks,
+			mentions: [],
 			score,
+		};
+	}
+
+	private buildImagePacket(result: SearchResult): DocumentPacket | null {
+		if (result.type !== "image" || !result.asset) return null;
+
+		const mentions = result.mentions ?? this.db.getMentionsByAsset(result.asset.asset_path);
+		const headingPath = mentions[0]?.heading_path_text ?? "";
+		const mentionText = mentions.length
+			? mentions
+					.slice(0, 5)
+					.map((mention, index) => {
+						const parts = [
+							`${index + 1}. Note: ${mention.note_path}`,
+						];
+						if (mention.heading_path_text) {
+							parts.push(`Heading: ${mention.heading_path_text}`);
+						}
+						if (mention.surrounding_text) {
+							parts.push(`Context: ${mention.surrounding_text}`);
+						}
+						return parts.join("\n");
+					})
+					.join("\n\n")
+			: "No note references were available for this image.";
+
+		return {
+			type: "image",
+			path: result.asset.asset_path,
+			headingPath,
+			content: `Image asset: ${result.asset.asset_path}\n\nReferenced by:\n${mentionText}`,
+			chunks: [],
+			mentions,
+			score: result.score,
 		};
 	}
 
@@ -142,7 +213,8 @@ export class ContextBuilder {
 	formatContextForPrompt(packets: DocumentPacket[]): string {
 		return packets
 			.map((p, i) => {
-				return `[Document ${i + 1}: ${p.notePath}]\n${p.content}`;
+				const label = p.type === "note" ? "Document" : "Image";
+				return `[${label} ${i + 1}: ${p.path}]\n${p.content}`;
 			})
 			.join("\n\n===\n\n");
 	}
