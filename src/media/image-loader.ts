@@ -1,34 +1,11 @@
-import type { App } from "obsidian";
+import type { App, TFile } from "obsidian";
 import type { BinaryImagePayload } from "../types/media";
 import { arrayBufferToImagePayload } from "../utils/base64";
 import { imageMimeTypeFromExtension, imageMimeTypeFromPath } from "../utils/mime";
-
-type VaultBinaryFile = {
-	path: string;
-	extension: string;
-	stat?: {
-		mtime: number;
-		size: number;
-	};
-};
-
-function asVaultBinaryFile(file: unknown): VaultBinaryFile | null {
-	if (
-		typeof file !== "object" ||
-		file === null ||
-		!("path" in file) ||
-		!("extension" in file) ||
-		typeof (file as { path?: unknown }).path !== "string" ||
-		typeof (file as { extension?: unknown }).extension !== "string"
-	) {
-		return null;
-	}
-
-	return file as VaultBinaryFile;
-}
+import { asTFile } from "../utils/obsidian-file";
 
 export interface LoadedVaultImage {
-	file: VaultBinaryFile;
+	file: TFile;
 	buffer: ArrayBuffer;
 	payload: BinaryImagePayload;
 }
@@ -36,8 +13,8 @@ export interface LoadedVaultImage {
 export function getVaultImageFile(
 	app: App,
 	assetPath: string
-): VaultBinaryFile | null {
-	return asVaultBinaryFile(app.vault.getAbstractFileByPath(assetPath));
+): TFile | null {
+	return asTFile(app.vault.getAbstractFileByPath(assetPath));
 }
 
 export async function loadVaultImagePayload(
@@ -56,7 +33,7 @@ export async function loadVaultImageData(
 		throw new Error(`Image not found: ${assetPath}`);
 	}
 
-	const buffer = await app.vault.readBinary(file as any);
+	const buffer = await app.vault.readBinary(file);
 	return {
 		file,
 		buffer,

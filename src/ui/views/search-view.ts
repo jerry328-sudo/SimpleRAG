@@ -2,6 +2,7 @@ import { ItemView, WorkspaceLeaf } from "obsidian";
 import type SimpleRAGPlugin from "../../main";
 import type { SearchResult, ChatReference } from "../../types/domain";
 import { getIndexMode } from "../../settings/types";
+import { asTFile } from "../../utils/obsidian-file";
 
 export const VIEW_TYPE_SIMPLE_RAG = "simple-rag-view";
 
@@ -26,7 +27,7 @@ export class SimpleRAGView extends ItemView {
 	}
 
 	getDisplayText(): string {
-		return "SimpleRAG";
+		return "Simple rag";
 	}
 
 	getIcon(): string {
@@ -81,29 +82,26 @@ export class SimpleRAGView extends ItemView {
 		const buttons = panel.createDiv("simple-rag-status-buttons");
 
 		const scanBtn = buttons.createEl("button", { text: "Scan" });
-		scanBtn.addEventListener("click", async () => {
-			scanBtn.disabled = true;
-			scanBtn.setText("Scanning…");
-			await this.plugin.scanChanges();
-			this.render();
+		scanBtn.addEventListener("click", () => {
+			void this.runStatusAction(scanBtn, "Scanning…", () =>
+				this.plugin.scanChanges()
+			);
 		});
 
 		const indexBtn = buttons.createEl("button", { text: "Update index" });
-		indexBtn.addEventListener("click", async () => {
-			indexBtn.disabled = true;
-			indexBtn.setText("Indexing…");
-			await this.plugin.updateIndex();
-			this.render();
+		indexBtn.addEventListener("click", () => {
+			void this.runStatusAction(indexBtn, "Indexing…", () =>
+				this.plugin.updateIndex()
+			);
 		});
 
 		const rebuildBtn = buttons.createEl("button", {
 			text: "Rebuild",
 		});
-		rebuildBtn.addEventListener("click", async () => {
-			rebuildBtn.disabled = true;
-			rebuildBtn.setText("Rebuilding…");
-			await this.plugin.rebuildIndex();
-			this.render();
+		rebuildBtn.addEventListener("click", () => {
+			void this.runStatusAction(rebuildBtn, "Rebuilding…", () =>
+				this.plugin.rebuildIndex()
+			);
 		});
 	}
 
@@ -143,10 +141,12 @@ export class SimpleRAGView extends ItemView {
 			}
 		};
 
-		searchBtn.addEventListener("click", doSearch);
+		searchBtn.addEventListener("click", () => {
+			void doSearch();
+		});
 		input.addEventListener("keydown", (e) => {
 			if (e.key === "Enter") {
-				doSearch();
+				void doSearch();
 			}
 		});
 
@@ -195,10 +195,12 @@ export class SimpleRAGView extends ItemView {
 				}
 			};
 
-			imageSearchBtn.addEventListener("click", doImageSearch);
+			imageSearchBtn.addEventListener("click", () => {
+				void doImageSearch();
+			});
 			imageInput.addEventListener("keydown", (e) => {
 				if (e.key === "Enter") {
-					doImageSearch();
+					void doImageSearch();
 				}
 			});
 		}
@@ -313,17 +315,17 @@ export class SimpleRAGView extends ItemView {
 		const actions = item.createDiv("simple-rag-result-actions");
 
 		const openBtn = actions.createEl("button", { text: "Open" });
-		openBtn.addEventListener("click", async () => {
+		openBtn.addEventListener("click", () => {
 			const targetPath =
 				result.type === "note"
 					? result.notePath
 					: result.asset?.asset_path ?? result.notePath;
-			await this.plugin.app.workspace.openLinkText(targetPath, "");
+			void this.plugin.app.workspace.openLinkText(targetPath, "");
 		});
 
 		const locateBtn = actions.createEl("button", { text: "Locate source" });
-		locateBtn.addEventListener("click", async () => {
-			await this.plugin.app.workspace.openLinkText(
+		locateBtn.addEventListener("click", () => {
+			void this.plugin.app.workspace.openLinkText(
 				this.getLocateTarget(result),
 				""
 			);
@@ -388,11 +390,8 @@ export class SimpleRAGView extends ItemView {
 					text: ref.path,
 					cls: "simple-rag-ref-link",
 				});
-				link.addEventListener("click", async () => {
-					await this.plugin.app.workspace.openLinkText(
-						ref.path,
-						""
-					);
+				link.addEventListener("click", () => {
+					void this.plugin.app.workspace.openLinkText(ref.path, "");
 				});
 				if (ref.headingPath) {
 					refItem.createSpan({
@@ -415,38 +414,8 @@ export class SimpleRAGView extends ItemView {
 			cls: "simple-rag-chat-send",
 		});
 
-		sendBtn.addEventListener("click", async () => {
-			const question = textarea.value.trim();
-			if (!question) return;
-
-			textarea.value = "";
-			sendBtn.disabled = true;
-			sendBtn.setText("Thinking…");
-
-			this.chatHistory.push({ role: "user", content: question });
-
-			try {
-				const result = await this.plugin.chat(
-					question,
-					contextResults,
-					this.chatHistory.slice(0, -1)
-				);
-
-				this.chatHistory.push({
-					role: "assistant",
-					content: result.content,
-				});
-				this.currentReferences = result.references;
-			} catch (e) {
-				const msg =
-					e instanceof Error ? e.message : "Chat failed";
-				this.chatHistory.push({
-					role: "assistant",
-					content: `Error: ${msg}`,
-				});
-			}
-
-			this.render();
+		sendBtn.addEventListener("click", () => {
+			void this.sendChatMessage(textarea, sendBtn, contextResults);
 		});
 
 		textarea.addEventListener("keydown", (e) => {
@@ -505,14 +474,12 @@ export class SimpleRAGView extends ItemView {
 		result: SearchResult
 	): void {
 		if (!result.asset) return;
-		const file = this.plugin.app.vault.getAbstractFileByPath(
-			result.asset.asset_path
+		const file = asTFile(
+			this.plugin.app.vault.getAbstractFileByPath(result.asset.asset_path)
 		);
 		if (!file) return;
 
-		const resourcePath = this.plugin.app.vault.getResourcePath?.(
-			file as any
-		);
+		const resourcePath = this.plugin.app.vault.getResourcePath?.(file);
 		if (!resourcePath) return;
 
 		container.createEl("img", {
@@ -563,6 +530,64 @@ export class SimpleRAGView extends ItemView {
 	 * Called by the plugin when index stats change.
 	 */
 	refresh(): void {
+		this.render();
+	}
+
+	private async runStatusAction(
+		button: HTMLButtonElement,
+		loadingText: string,
+		action: () => Promise<void>
+	): Promise<void> {
+		const originalText = button.textContent ?? "";
+		button.disabled = true;
+		button.setText(loadingText);
+
+		try {
+			await action();
+			this.render();
+		} finally {
+			button.disabled = false;
+			button.setText(originalText);
+		}
+	}
+
+	private async sendChatMessage(
+		textarea: HTMLTextAreaElement,
+		sendBtn: HTMLButtonElement,
+		contextResults: SearchResult[]
+	): Promise<void> {
+		const question = textarea.value.trim();
+		if (!question) return;
+
+		textarea.value = "";
+		sendBtn.disabled = true;
+		sendBtn.setText("Thinking…");
+
+		this.chatHistory.push({ role: "user", content: question });
+
+		try {
+			const result = await this.plugin.chat(
+				question,
+				contextResults,
+				this.chatHistory.slice(0, -1)
+			);
+
+			this.chatHistory.push({
+				role: "assistant",
+				content: result.content,
+			});
+			this.currentReferences = result.references;
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : "Chat failed";
+			this.chatHistory.push({
+				role: "assistant",
+				content: `Error: ${msg}`,
+			});
+		} finally {
+			sendBtn.disabled = false;
+			sendBtn.setText("Send");
+		}
+
 		this.render();
 	}
 }

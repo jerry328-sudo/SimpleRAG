@@ -38,7 +38,7 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 		);
 
 		// ---- Group A: Providers ----
-		containerEl.createEl("h2", { text: "Providers" });
+		this.addHeading(containerEl, "Providers");
 
 		new Setting(containerEl)
 			.setName("Embedding provider")
@@ -114,7 +114,7 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 			});
 
 		// ---- Group B: Features ----
-		containerEl.createEl("h2", { text: "Features" });
+		this.addHeading(containerEl, "Features");
 
 		new Setting(containerEl)
 			.setName("Enable image embedding")
@@ -148,7 +148,7 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 			);
 
 		// ---- Group C: Index status ----
-		containerEl.createEl("h2", { text: "Index status" });
+		this.addHeading(containerEl, "Index status");
 
 		const stats = this.plugin.getIndexStats();
 		const statusDiv = containerEl.createDiv("simple-rag-index-status");
@@ -224,7 +224,7 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 		advancedDetails.createEl("summary", { text: "Advanced settings" });
 
 		// Retrieval
-		advancedDetails.createEl("h3", { text: "Retrieval" });
+		this.addHeading(advancedDetails, "Retrieval");
 
 		new Setting(advancedDetails)
 			.setName("Enable rerank")
@@ -256,7 +256,7 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 			.setName("Rerank model")
 			.addText((text) =>
 				text
-					.setPlaceholder("rerank-v1")
+					.setPlaceholder("Example: rerank-v1")
 					.setValue(this.plugin.settings.rerankModel)
 					.onChange(async (value) => {
 						this.plugin.settings.rerankModel = value;
@@ -312,7 +312,7 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 			);
 
 		// Chat
-		advancedDetails.createEl("h3", { text: "Chat" });
+		this.addHeading(advancedDetails, "Chat");
 
 		new Setting(advancedDetails)
 			.setName("Chat provider")
@@ -423,7 +423,7 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 		new Setting(advancedDetails)
 			.setName("Enable AI evidence selection")
 			.setDesc(
-				"Use LLM to filter and compress evidence before final answer"
+				"Use AI to filter and compress evidence before the final answer"
 			)
 			.addToggle((toggle) =>
 				toggle
@@ -435,7 +435,7 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 			);
 
 		// Network
-		advancedDetails.createEl("h3", { text: "Network" });
+		this.addHeading(advancedDetails, "Network");
 
 		new Setting(advancedDetails)
 			.setName("Rerank base URL")
@@ -507,7 +507,7 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 			);
 
 		// Debug
-		advancedDetails.createEl("h3", { text: "Debug & maintenance" });
+		this.addHeading(advancedDetails, "Debug and maintenance");
 
 		new Setting(advancedDetails)
 			.setName("Show similarity scores")
@@ -557,10 +557,8 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 		if (existing) return;
 		const warning = container.createDiv("simple-rag-rebuild-warning");
 		warning.setText(
-			"⚠ Embedding model or image embedding changed. A full index rebuild is required."
+			"Embedding settings changed. Rebuild the full index."
 		);
-		warning.style.color = "var(--text-error)";
-		warning.style.marginTop = "8px";
 	}
 
 	private async confirmAction(
@@ -576,6 +574,10 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 			);
 			modal.open();
 		});
+	}
+
+	private addHeading(container: HTMLElement, title: string): void {
+		new Setting(container).setName(title).setHeading();
 	}
 
 }

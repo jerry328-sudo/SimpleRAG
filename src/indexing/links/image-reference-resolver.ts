@@ -1,12 +1,5 @@
 import { normalizePath, type App } from "obsidian";
-import type { AssetMention, LinkKind } from "../../types/domain";
-
-interface ImageRef {
-	rawTarget: string;
-	linkKind: LinkKind;
-	lineIndex: number;
-	charIndex: number;
-}
+import type { AssetMention } from "../../types/domain";
 
 const IMAGE_EXTENSIONS = new Set([
 	".png",

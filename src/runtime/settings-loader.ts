@@ -67,7 +67,7 @@ function isValidPartialSettings(
 		return false;
 	}
 
-	const record = value as Record<string, unknown>;
+	const record = value;
 	return (
 		isOptionalString(record.embeddingProvider) &&
 		isOptionalString(record.embeddingModel) &&
@@ -153,5 +153,6 @@ function isOptionalEnum<T extends string>(
 	value: unknown,
 	allowed: T[]
 ): boolean {
-	return value === undefined || (typeof value === "string" && allowed.includes(value as T));
+	const allowedSet = new Set<string>(allowed);
+	return value === undefined || (typeof value === "string" && allowedSet.has(value));
 }

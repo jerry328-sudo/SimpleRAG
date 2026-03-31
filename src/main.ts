@@ -44,15 +44,17 @@ export default class SimpleRAGPlugin extends Plugin {
 		});
 
 		// Ribbon icon to open the search panel
-		this.addRibbonIcon("search", "SimpleRAG", () => {
-			this.activateView();
+		this.addRibbonIcon("search", "Open search panel", () => {
+			void this.activateView();
 		});
 
 		// Commands
 		this.addCommand({
 			id: "open-search-panel",
 			name: "Open search panel",
-			callback: () => this.activateView(),
+			callback: () => {
+				void this.activateView();
+			},
 		});
 
 		this.addCommand({
@@ -60,7 +62,7 @@ export default class SimpleRAGPlugin extends Plugin {
 			name: "Scan vault for changes",
 			callback: async () => {
 				await this.scanChanges();
-				new Notice("SimpleRAG: Scan complete");
+				new Notice("Scan complete");
 			},
 		});
 
@@ -69,7 +71,7 @@ export default class SimpleRAGPlugin extends Plugin {
 			name: "Update index",
 			callback: async () => {
 				await this.updateIndex();
-				new Notice("SimpleRAG: Index updated");
+				new Notice("Index updated");
 			},
 		});
 
@@ -78,7 +80,7 @@ export default class SimpleRAGPlugin extends Plugin {
 			name: "Rebuild full index",
 			callback: async () => {
 				await this.rebuildIndex();
-				new Notice("SimpleRAG: Full rebuild complete");
+				new Notice("Full rebuild complete");
 			},
 		});
 
@@ -88,13 +90,13 @@ export default class SimpleRAGPlugin extends Plugin {
 		registerVaultChangeTracking(this, this.state, () => this.settings);
 
 		// Perform initial scan (deferred to avoid blocking startup)
-		this.app.workspace.onLayoutReady(async () => {
-			await this.scanChanges();
+		this.app.workspace.onLayoutReady(() => {
+			void this.scanChanges();
 		});
 	}
 
-	async onunload(): Promise<void> {
-		await this.db.save();
+	onunload(): void {
+		void this.db.save();
 	}
 
 	async loadSettings(): Promise<void> {
@@ -118,7 +120,7 @@ export default class SimpleRAGPlugin extends Plugin {
 			this.refreshView();
 
 			if (this.settings.enableDebugLogs) {
-				console.log(
+				console.debug(
 					`[SimpleRAG] Scan: ${result.added.length} added, ${result.modified.length} modified, ${result.deleted.length} deleted`
 				);
 			}
@@ -133,7 +135,7 @@ export default class SimpleRAGPlugin extends Plugin {
 		try {
 			const result = await this.service.updateIndex((current, total) => {
 				if (this.settings.enableDebugLogs) {
-					console.log(
+					console.debug(
 						`[SimpleRAG] Indexing ${current}/${total}`
 					);
 				}
@@ -158,7 +160,7 @@ export default class SimpleRAGPlugin extends Plugin {
 			const result = await this.service.rebuildIndex(
 				(current, total) => {
 					if (this.settings.enableDebugLogs) {
-						console.log(
+						console.debug(
 							`[SimpleRAG] Rebuilding ${current}/${total}`
 						);
 					}
@@ -212,7 +214,7 @@ export default class SimpleRAGPlugin extends Plugin {
 		const existing =
 			this.app.workspace.getLeavesOfType(VIEW_TYPE_SIMPLE_RAG);
 		if (existing.length > 0) {
-			this.app.workspace.revealLeaf(existing[0]!);
+			void this.app.workspace.revealLeaf(existing[0]!);
 			return;
 		}
 
@@ -222,7 +224,7 @@ export default class SimpleRAGPlugin extends Plugin {
 				type: VIEW_TYPE_SIMPLE_RAG,
 				active: true,
 			});
-			this.app.workspace.revealLeaf(leaf);
+			void this.app.workspace.revealLeaf(leaf);
 		}
 	}
 

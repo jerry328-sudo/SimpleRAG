@@ -3,7 +3,7 @@ import type { Database } from "../storage/db";
 import type { SimpleRAGSettings } from "../settings/types";
 import type { EmbeddingProvider } from "../providers/types";
 import type { RuntimeState } from "../runtime/state";
-import type { NoteChunk, AssetMention } from "../types/domain";
+import type { NoteChunk } from "../types/domain";
 import {
 	parseMarkdownSections,
 	chunkSections,
@@ -17,6 +17,7 @@ import {
 	getVaultImageFile,
 	loadVaultImageData,
 } from "../media/image-loader";
+import { asTFile } from "../utils/obsidian-file";
 
 /**
  * Orchestrates the indexing pipeline: reading dirty files, chunking,
@@ -132,10 +133,10 @@ export class IndexManager {
 	 * Index a single Markdown note.
 	 */
 	private async indexNote(notePath: string): Promise<void> {
-		const file = this.app.vault.getAbstractFileByPath(notePath);
-		if (!file || !("extension" in file)) return;
+		const file = asTFile(this.app.vault.getAbstractFileByPath(notePath));
+		if (!file) return;
 
-		const content = await this.app.vault.cachedRead(file as any);
+		const content = await this.app.vault.cachedRead(file);
 		const noteHash = hashText(content);
 
 		// 1. Parse and chunk

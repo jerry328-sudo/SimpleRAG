@@ -24,7 +24,5 @@
 			"ES7"
 		]
 	},
-	"include": [
-		"src/**/*.ts"
-	]
+	"include": ["src/**/*.ts"]
 }

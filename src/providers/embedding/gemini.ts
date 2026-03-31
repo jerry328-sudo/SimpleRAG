@@ -104,12 +104,12 @@ export class GeminiEmbeddingProvider implements EmbeddingProvider {
 
 		const vectors = singleRequest
 			? [
-					((response.json as GeminiSingleEmbedResponse).embedding?.values ??
-						[]) as number[],
+					(response.json as GeminiSingleEmbedResponse).embedding?.values ??
+						[],
 			  ]
-			: (((response.json as GeminiBatchEmbedResponse).embeddings ?? []).map(
+			: ((response.json as GeminiBatchEmbedResponse).embeddings ?? []).map(
 					(embedding) => embedding.values ?? []
-			  ) as number[][]);
+			  );
 
 		const dimension = vectors[0]?.length ?? 0;
 		return { vectors, dimension };

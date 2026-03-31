@@ -61,11 +61,6 @@ export class QueryService {
 			);
 		}
 
-		const file = this.app.vault.getAbstractFileByPath(imagePath);
-		if (!file || !("extension" in file)) {
-			throw new Error(`Image not found: ${imagePath}`);
-		}
-
 		const queryEmbedding = await this.embeddingProvider.embed({
 			images: [await loadVaultImagePayload(this.app, imagePath)],
 		});

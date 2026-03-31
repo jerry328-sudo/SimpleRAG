@@ -5,6 +5,7 @@ import type { SearchResult, NoteChunk, AssetMention } from "../types/domain";
 import type { BinaryImagePayload } from "../types/media";
 import { estimateTokens } from "../indexing/chunking/markdown-parser";
 import { tryLoadVaultImagePayload } from "../media/image-loader";
+import { asTFile } from "../utils/obsidian-file";
 
 export interface DocumentPacket {
 	type: "note" | "image";
@@ -116,10 +117,10 @@ export class ContextBuilder {
 		score: number
 	): Promise<DocumentPacket | null> {
 		// Try to read the full note
-		const file = this.app.vault.getAbstractFileByPath(notePath);
-		if (!file || !("extension" in file)) return null;
+		const file = asTFile(this.app.vault.getAbstractFileByPath(notePath));
+		if (!file) return null;
 
-		const fullContent = await this.app.vault.cachedRead(file as any);
+		const fullContent = await this.app.vault.cachedRead(file);
 		const fullTokens = estimateTokens(fullContent);
 
 		if (fullTokens < this.settings.shortNoteThreshold) {

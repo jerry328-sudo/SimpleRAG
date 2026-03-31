@@ -1,5 +1,4 @@
 import type { App } from "obsidian";
-import { ContextBuilder } from "../chat/context-builder";
 import { ConversationService } from "../chat/conversation-service";
 import { IndexManager } from "../indexing/index-manager";
 import { VaultScanner } from "../indexing/scanner";
@@ -181,7 +180,7 @@ export class SimpleRAGService {
 
 		const validationErrors = this.providerRegistry.validateSettings(settings);
 		if (validationErrors.length > 0) {
-			throw new Error(validationErrors[0]!);
+			throw new Error(validationErrors[0]);
 		}
 
 		const service = new ConversationService(
@@ -228,7 +227,7 @@ export class SimpleRAGService {
 
 		const validationErrors = this.providerRegistry.validateSettings(settings);
 		if (validationErrors.length > 0) {
-			throw new Error(validationErrors[0]!);
+			throw new Error(validationErrors[0]);
 		}
 	}
 }

@@ -306,7 +306,7 @@ function isDatabaseSchema(value: unknown): value is DatabaseSchema {
 		return false;
 	}
 
-	const record = value as Record<string, unknown>;
+	const record = value;
 	if (
 		!isPlainObject(record.schema_meta) ||
 		!isPlainObject(record.files) ||
@@ -424,7 +424,7 @@ function isEmbeddingRecord(value: unknown): boolean {
 		typeof value.created_at_ms === "number";
 }
 
-function isPlainObject(value: unknown): value is Record<string, any> {
+function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 

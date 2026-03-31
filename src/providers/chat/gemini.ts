@@ -135,7 +135,7 @@ export class GeminiChatProvider implements ChatProvider {
 				}
 
 				try {
-					const parsed = JSON.parse(payload);
+					const parsed: unknown = JSON.parse(payload);
 					const delta = extractGeminiText(parsed);
 					if (delta) {
 						onEvent({ delta, done: false });

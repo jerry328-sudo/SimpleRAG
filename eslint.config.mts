@@ -10,12 +10,7 @@ export default tseslint.config(
 				...globals.browser,
 			},
 			parserOptions: {
-				projectService: {
-					allowDefaultProject: [
-						'eslint.config.js',
-						'manifest.json'
-					]
-				},
+				project: "./tsconfig.eslint.json",
 				tsconfigRootDir: import.meta.dirname,
 				extraFileExtensions: ['.json']
 			},
@@ -25,6 +20,8 @@ export default tseslint.config(
 	globalIgnores([
 		"node_modules",
 		"dist",
+		"tests",
+		"vitest.config.ts",
 		"esbuild.config.mjs",
 		"eslint.config.js",
 		"version-bump.mjs",

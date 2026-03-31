@@ -57,7 +57,7 @@ export async function fetchWithRetry(
 		);
 
 		try {
-			const response = await fetch(options.url, {
+			const response = await globalThis.fetch(options.url, {
 				...options.init,
 				signal: controller.signal,
 			});
@@ -117,7 +117,7 @@ function withTimeout<T>(
 			})
 			.catch((error) => {
 				globalThis.clearTimeout(timeoutId);
-				reject(error);
+				reject(normalizeError(error, requestLabel));
 			});
 	});
 }
