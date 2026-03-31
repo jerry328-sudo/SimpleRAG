@@ -1,27 +1,30 @@
-import { requestUrl } from "obsidian";
 import type {
 	EmbeddingProvider,
 	EmbeddingCapability,
 	EmbeddingRequest,
 	EmbeddingResponse,
 } from "../types";
+import { requestWithRetry } from "../request";
 
 export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
 	readonly capability: EmbeddingCapability;
 	private baseUrl: string;
 	private apiToken: string;
 	private timeout: number;
+	private retryCount: number;
 
 	constructor(
 		baseUrl: string,
 		apiToken: string,
 		modelId: string,
 		timeout: number,
+		retryCount: number,
 		supportsImage: boolean
 	) {
 		this.baseUrl = baseUrl.replace(/\/+$/, "");
 		this.apiToken = apiToken;
 		this.timeout = timeout;
+		this.retryCount = retryCount;
 		this.capability = {
 			providerId: "openai-compatible",
 			modelId,
@@ -56,7 +59,7 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
 			input: inputs,
 		};
 
-		const response = await requestUrl({
+		const response = await requestWithRetry({
 			url: `${this.baseUrl}/embeddings`,
 			method: "POST",
 			headers: {
@@ -64,7 +67,9 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
 				Authorization: `Bearer ${this.apiToken}`,
 			},
 			body: JSON.stringify(body),
-			throw: false,
+			timeoutMs: this.timeout,
+			retryCount: this.retryCount,
+			requestLabel: "Embedding request",
 		});
 
 		if (response.status !== 200) {

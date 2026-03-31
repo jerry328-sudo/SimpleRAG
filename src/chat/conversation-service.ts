@@ -1,9 +1,15 @@
 import type { Database } from "../storage/db";
 import type { SimpleRAGSettings } from "../settings/types";
-import type { ChatProvider, ChatStreamEvent } from "../providers/types";
+import type {
+	ChatProvider,
+	ChatStreamEvent,
+	ChatMessage,
+	ChatContentPart,
+} from "../providers/types";
 import type { SearchResult, ChatReference } from "../types/domain";
 import type { App } from "obsidian";
-import { ContextBuilder } from "./context-builder";
+import { ContextBuilder, type DocumentPacket } from "./context-builder";
+import { EvidenceSelector } from "./evidence-selector";
 
 const SYSTEM_PROMPT = `You are a helpful research assistant. Answer the user's question based ONLY on the provided documents.
 
@@ -28,6 +34,7 @@ export class ConversationService {
 	private settings: SimpleRAGSettings;
 	private chatProvider: ChatProvider;
 	private contextBuilder: ContextBuilder;
+	private evidenceSelector: EvidenceSelector;
 
 	constructor(
 		app: App,
@@ -40,6 +47,7 @@ export class ConversationService {
 		this.settings = settings;
 		this.chatProvider = chatProvider;
 		this.contextBuilder = new ContextBuilder(app, db, settings);
+		this.evidenceSelector = new EvidenceSelector(chatProvider);
 	}
 
 	/**
@@ -53,19 +61,12 @@ export class ConversationService {
 			content: string;
 		}>
 	): Promise<ConversationResult> {
-		const packets = await this.contextBuilder.buildContext(searchResults);
-		const contextText =
-			this.contextBuilder.formatContextForPrompt(packets);
-
-		const messages = [
-			{ role: "system" as const, content: SYSTEM_PROMPT },
-			{
-				role: "user" as const,
-				content: `Here are the relevant documents:\n\n${contextText}`,
-			},
-			...conversationHistory,
-			{ role: "user" as const, content: userMessage },
-		];
+		const packets = await this.getContextPackets(userMessage, searchResults);
+		const messages = this.buildMessages(
+			userMessage,
+			packets,
+			conversationHistory
+		);
 
 		const response = await this.chatProvider.chat({ messages });
 
@@ -99,19 +100,12 @@ export class ConversationService {
 		}>,
 		onEvent: (event: ChatStreamEvent) => void
 	): Promise<ChatReference[]> {
-		const packets = await this.contextBuilder.buildContext(searchResults);
-		const contextText =
-			this.contextBuilder.formatContextForPrompt(packets);
-
-		const messages = [
-			{ role: "system" as const, content: SYSTEM_PROMPT },
-			{
-				role: "user" as const,
-				content: `Here are the relevant documents:\n\n${contextText}`,
-			},
-			...conversationHistory,
-			{ role: "user" as const, content: userMessage },
-		];
+		const packets = await this.getContextPackets(userMessage, searchResults);
+		const messages = this.buildMessages(
+			userMessage,
+			packets,
+			conversationHistory
+		);
 
 		if (this.chatProvider.chatStream) {
 			await this.chatProvider.chatStream(
@@ -134,5 +128,79 @@ export class ConversationService {
 					? p.content.slice(0, 200) + "…"
 					: p.content,
 		}));
+	}
+
+	private async getContextPackets(
+		userMessage: string,
+		searchResults: SearchResult[]
+	): Promise<DocumentPacket[]> {
+		const packets = await this.contextBuilder.buildContext(searchResults);
+		if (!this.settings.enableAIEvidenceSelection) {
+			return packets;
+		}
+		return this.evidenceSelector.select(userMessage, packets);
+	}
+
+	private buildMessages(
+		userMessage: string,
+		packets: DocumentPacket[],
+		conversationHistory: Array<{
+			role: "user" | "assistant";
+			content: string;
+		}>
+	): ChatMessage[] {
+		const messages: ChatMessage[] = [
+			{ role: "system", content: SYSTEM_PROMPT },
+			{
+				role: "user",
+				content: this.buildContextMessageContent(packets),
+			},
+		];
+
+		for (const item of conversationHistory) {
+			messages.push({
+				role: item.role,
+				content: item.content,
+			});
+		}
+
+		messages.push({
+			role: "user",
+			content: userMessage,
+		});
+
+		return messages;
+	}
+
+	private buildContextMessageContent(
+		packets: DocumentPacket[]
+	): string | ChatContentPart[] {
+		const contextText = this.contextBuilder.formatContextForPrompt(packets);
+		if (!this.chatProvider.capability.supportsVisionInput) {
+			return `Here are the relevant documents:\n\n${contextText}`;
+		}
+
+		const parts: ChatContentPart[] = [
+			{
+				type: "text",
+				text: "Here are the relevant documents and images. Use them as the only evidence source.",
+			},
+		];
+
+		for (let i = 0; i < packets.length; i++) {
+			const packet = packets[i]!;
+			parts.push({
+				type: "text",
+				text: `[${i + 1}] ${packet.type.toUpperCase()} ${packet.path}\n${packet.content}`,
+			});
+			if (packet.type === "image" && packet.imageDataUrl) {
+				parts.push({
+					type: "image_url",
+					image_url: { url: packet.imageDataUrl },
+				});
+			}
+		}
+
+		return parts;
 	}
 }

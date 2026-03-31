@@ -75,6 +75,9 @@ export function createMockApp(initialFiles: Record<string, MockFileSpec> = {}) {
 		getAbstractFileByPath(path: string) {
 			return files.get(path) ?? null;
 		},
+		getResourcePath(file: MockFile) {
+			return `app://mock/${file.path}`;
+		},
 		async cachedRead(file: MockFile) {
 			return file.__content ?? "";
 		},
@@ -87,9 +90,39 @@ export function createMockApp(initialFiles: Record<string, MockFileSpec> = {}) {
 		},
 	};
 
+	const metadataCache = {
+		getFirstLinkpathDest(target: string, sourcePath: string) {
+			const normalizedTarget = target.replace(/\\/g, "/");
+			const direct = files.get(normalizedTarget);
+			if (direct) {
+				return direct;
+			}
+
+			const sourceDir = sourcePath.includes("/")
+				? sourcePath.slice(0, sourcePath.lastIndexOf("/"))
+				: "";
+			const relativePath = sourceDir
+				? normalizePath(`${sourceDir}/${normalizedTarget}`)
+				: normalizePath(normalizedTarget);
+			const relative = files.get(relativePath);
+			if (relative) {
+				return relative;
+			}
+
+			const basename = normalizedTarget.split("/").pop();
+			if (!basename) return null;
+			return (
+				Array.from(files.values()).find(
+					(file) => file.path.split("/").pop() === basename
+				) ?? null
+			);
+		},
+	};
+
 	return {
 		app: {
 			vault,
+			metadataCache,
 			workspace: {},
 		} as any,
 		setTextFile(path: string, content: string, mtime = Date.now()) {
@@ -118,4 +151,20 @@ export function createMockApp(initialFiles: Record<string, MockFileSpec> = {}) {
 		},
 		storage,
 	};
+}
+
+function normalizePath(path: string): string {
+	const segments = path.replace(/\\/g, "/").split("/");
+	const normalized: string[] = [];
+
+	for (const segment of segments) {
+		if (!segment || segment === ".") continue;
+		if (segment === "..") {
+			normalized.pop();
+			continue;
+		}
+		normalized.push(segment);
+	}
+
+	return normalized.join("/");
 }

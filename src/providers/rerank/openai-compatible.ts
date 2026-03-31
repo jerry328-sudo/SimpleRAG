@@ -1,26 +1,29 @@
-import { requestUrl } from "obsidian";
 import type {
 	RerankProvider,
 	RerankCapability,
 	RerankRequest,
 	RerankResponse,
 } from "../types";
+import { requestWithRetry } from "../request";
 
 export class OpenAICompatibleRerankProvider implements RerankProvider {
 	readonly capability: RerankCapability;
 	private baseUrl: string;
 	private apiToken: string;
 	private timeout: number;
+	private retryCount: number;
 
 	constructor(
 		baseUrl: string,
 		apiToken: string,
 		modelId: string,
-		timeout: number
+		timeout: number,
+		retryCount: number
 	) {
 		this.baseUrl = baseUrl.replace(/\/+$/, "");
 		this.apiToken = apiToken;
 		this.timeout = timeout;
+		this.retryCount = retryCount;
 		this.capability = {
 			providerId: "openai-compatible",
 			modelId,
@@ -41,7 +44,7 @@ export class OpenAICompatibleRerankProvider implements RerankProvider {
 			documents: request.documents,
 		};
 
-		const response = await requestUrl({
+		const response = await requestWithRetry({
 			url: `${this.baseUrl}/rerank`,
 			method: "POST",
 			headers: {
@@ -49,7 +52,9 @@ export class OpenAICompatibleRerankProvider implements RerankProvider {
 				Authorization: `Bearer ${this.apiToken}`,
 			},
 			body: JSON.stringify(body),
-			throw: false,
+			timeoutMs: this.timeout,
+			retryCount: this.retryCount,
+			requestLabel: "Rerank request",
 		});
 
 		if (response.status !== 200) {

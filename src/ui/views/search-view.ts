@@ -12,11 +12,13 @@ export class SimpleRAGView extends ItemView {
 		role: "user" | "assistant";
 		content: string;
 	}> = [];
-	private activeTab: "all" | "notes" | "images" = "all";
+	private activeTab: "all" | "notes" | "images";
+	private selectedChatKeys = new Set<string>();
 
 	constructor(leaf: WorkspaceLeaf, plugin: SimpleRAGPlugin) {
 		super(leaf);
 		this.plugin = plugin;
+		this.activeTab = plugin.settings.defaultResultTab;
 	}
 
 	getViewType(): string {
@@ -93,19 +95,30 @@ export class SimpleRAGView extends ItemView {
 			await this.plugin.updateIndex();
 			this.render();
 		});
+
+		const rebuildBtn = buttons.createEl("button", {
+			text: "Rebuild",
+		});
+		rebuildBtn.addEventListener("click", async () => {
+			rebuildBtn.disabled = true;
+			rebuildBtn.setText("Rebuilding…");
+			await this.plugin.rebuildIndex();
+			this.render();
+		});
 	}
 
 	// ---- Search Box ----
 	private renderSearchBox(container: HTMLElement): void {
 		const searchBox = container.createDiv("simple-rag-search-box");
 
-		const input = searchBox.createEl("input", {
+		const textRow = searchBox.createDiv("simple-rag-search-row");
+		const input = textRow.createEl("input", {
 			type: "text",
 			placeholder: "Search your vault…",
 			cls: "simple-rag-search-input",
 		});
 
-		const searchBtn = searchBox.createEl("button", {
+		const searchBtn = textRow.createEl("button", {
 			text: "Search",
 			cls: "simple-rag-search-btn",
 		});
@@ -118,14 +131,13 @@ export class SimpleRAGView extends ItemView {
 			searchBtn.setText("Searching…");
 
 			try {
-				this.searchResults = await this.plugin.search(query);
-				this.chatHistory = [];
-				this.currentReferences = [];
+				this.setSearchResults(await this.plugin.search(query));
 				this.render();
 			} catch (e) {
 				const msg =
 					e instanceof Error ? e.message : "Search failed";
 				this.showError(container, msg);
+			} finally {
 				searchBtn.disabled = false;
 				searchBtn.setText("Search");
 			}
@@ -137,6 +149,59 @@ export class SimpleRAGView extends ItemView {
 				doSearch();
 			}
 		});
+
+		if (this.plugin.settings.enableImageEmbedding) {
+			const imageRow = searchBox.createDiv("simple-rag-search-row");
+			const datalistId = "simple-rag-image-query-options";
+			const imageInput = imageRow.createEl("input", {
+				type: "text",
+				placeholder: "Select indexed image path…",
+				cls: "simple-rag-search-input",
+				attr: { list: datalistId },
+			});
+			const datalist = imageRow.createEl("datalist", {
+				attr: { id: datalistId },
+			});
+			for (const asset of this.plugin.db.getAllAssets()) {
+				datalist.createEl("option", {
+					value: asset.asset_path,
+				});
+			}
+
+			const imageSearchBtn = imageRow.createEl("button", {
+				text: "Search image",
+				cls: "simple-rag-search-btn",
+			});
+
+			const doImageSearch = async () => {
+				const imagePath = imageInput.value.trim();
+				if (!imagePath) return;
+
+				imageSearchBtn.disabled = true;
+				imageSearchBtn.setText("Searching…");
+
+				try {
+					this.setSearchResults(
+						await this.plugin.searchByImage(imagePath)
+					);
+					this.render();
+				} catch (e) {
+					const msg =
+						e instanceof Error ? e.message : "Image search failed";
+					this.showError(container, msg);
+				} finally {
+					imageSearchBtn.disabled = false;
+					imageSearchBtn.setText("Search image");
+				}
+			};
+
+			imageSearchBtn.addEventListener("click", doImageSearch);
+			imageInput.addEventListener("keydown", (e) => {
+				if (e.key === "Enter") {
+					doImageSearch();
+				}
+			});
+		}
 	}
 
 	// ---- Result Tabs ----
@@ -218,7 +283,10 @@ export class SimpleRAGView extends ItemView {
 
 		// Path
 		item.createDiv({
-			text: result.notePath,
+			text:
+				result.type === "note"
+					? result.notePath
+					: result.asset?.asset_path ?? result.notePath,
 			cls: "simple-rag-result-path",
 		});
 
@@ -236,19 +304,44 @@ export class SimpleRAGView extends ItemView {
 			cls: "simple-rag-result-snippet",
 		});
 
+		if (result.type === "image") {
+			this.renderImagePreview(item, result);
+			this.renderImageMentions(item, result);
+		}
+
 		// Actions
 		const actions = item.createDiv("simple-rag-result-actions");
 
 		const openBtn = actions.createEl("button", { text: "Open" });
 		openBtn.addEventListener("click", async () => {
-			const file =
-				this.plugin.app.vault.getAbstractFileByPath(result.notePath);
-			if (file) {
-				await this.plugin.app.workspace.openLinkText(
-					result.notePath,
-					""
-				);
+			const targetPath =
+				result.type === "note"
+					? result.notePath
+					: result.asset?.asset_path ?? result.notePath;
+			await this.plugin.app.workspace.openLinkText(targetPath, "");
+		});
+
+		const locateBtn = actions.createEl("button", { text: "Locate source" });
+		locateBtn.addEventListener("click", async () => {
+			await this.plugin.app.workspace.openLinkText(
+				this.getLocateTarget(result),
+				""
+			);
+		});
+
+		const chatBtn = actions.createEl("button", {
+			text: this.selectedChatKeys.has(this.getResultKey(result))
+				? "Remove from chat"
+				: "Add to chat",
+		});
+		chatBtn.addEventListener("click", () => {
+			const key = this.getResultKey(result);
+			if (this.selectedChatKeys.has(key)) {
+				this.selectedChatKeys.delete(key);
+			} else {
+				this.selectedChatKeys.add(key);
 			}
+			this.render();
 		});
 	}
 
@@ -257,7 +350,13 @@ export class SimpleRAGView extends ItemView {
 		if (this.searchResults.length === 0) return;
 
 		const chatPanel = container.createDiv("simple-rag-chat-panel");
-		chatPanel.createEl("h4", { text: "Chat" });
+		const contextResults = this.getChatContextResults();
+		chatPanel.createEl("h4", {
+			text:
+				this.selectedChatKeys.size > 0
+					? `Chat (${contextResults.length} selected)`
+					: "Chat",
+		});
 
 		// Chat history
 		const history = chatPanel.createDiv("simple-rag-chat-history");
@@ -329,7 +428,7 @@ export class SimpleRAGView extends ItemView {
 			try {
 				const result = await this.plugin.chat(
 					question,
-					this.searchResults,
+					contextResults,
 					this.chatHistory.slice(0, -1)
 				);
 
@@ -359,6 +458,97 @@ export class SimpleRAGView extends ItemView {
 	}
 
 	private currentReferences: ChatReference[] = [];
+
+	private setSearchResults(results: SearchResult[]): void {
+		this.searchResults = results;
+		this.chatHistory = [];
+		this.currentReferences = [];
+		this.selectedChatKeys.clear();
+	}
+
+	private getResultKey(result: SearchResult): string {
+		if (result.type === "note") {
+			return `note:${result.chunk?.chunk_id ?? result.notePath}`;
+		}
+		return `image:${result.asset?.asset_path ?? result.notePath}`;
+	}
+
+	private getChatContextResults(): SearchResult[] {
+		if (this.selectedChatKeys.size === 0) {
+			return this.searchResults;
+		}
+
+		return this.searchResults.filter((result) =>
+			this.selectedChatKeys.has(this.getResultKey(result))
+		);
+	}
+
+	private getLocateTarget(result: SearchResult): string {
+		if (result.type === "note") {
+			return result.headingPath
+				? `${result.notePath}#${result.headingPath}`
+				: result.notePath;
+		}
+
+		const mention = result.mentions?.[0];
+		if (!mention) {
+			return result.asset?.asset_path ?? result.notePath;
+		}
+
+		return mention.heading_path_text
+			? `${mention.note_path}#${mention.heading_path_text}`
+			: mention.note_path;
+	}
+
+	private renderImagePreview(
+		container: HTMLElement,
+		result: SearchResult
+	): void {
+		if (!result.asset) return;
+		const file = this.plugin.app.vault.getAbstractFileByPath(
+			result.asset.asset_path
+		);
+		if (!file) return;
+
+		const resourcePath = this.plugin.app.vault.getResourcePath?.(
+			file as any
+		);
+		if (!resourcePath) return;
+
+		container.createEl("img", {
+			cls: "simple-rag-image-preview",
+			attr: {
+				src: resourcePath,
+				alt: result.asset.asset_path,
+			},
+		});
+	}
+
+	private renderImageMentions(
+		container: HTMLElement,
+		result: SearchResult
+	): void {
+		if (result.type !== "image") return;
+		const mentions = result.mentions ?? [];
+		if (mentions.length === 0) return;
+
+		const mentionContainer = container.createDiv(
+			"simple-rag-image-mentions"
+		);
+		mentionContainer.createDiv({
+			text: "Referenced by",
+			cls: "simple-rag-image-mentions-title",
+		});
+
+		for (const mention of mentions.slice(0, 3)) {
+			mentionContainer.createDiv({
+				text: mention.heading_path_text
+					? `${mention.note_path} › ${mention.heading_path_text}`
+					: mention.note_path,
+				cls: "simple-rag-image-mention-item",
+			});
+		}
+	}
 
 	private showError(container: HTMLElement, message: string): void {
 		const existing = container.querySelector(".simple-rag-error");

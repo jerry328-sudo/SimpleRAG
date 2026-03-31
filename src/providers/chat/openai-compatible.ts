@@ -1,4 +1,3 @@
-import { requestUrl } from "obsidian";
 import type {
 	ChatProvider,
 	ChatCapability,
@@ -6,28 +5,32 @@ import type {
 	ChatResponse,
 	ChatStreamEvent,
 } from "../types";
+import { fetchWithRetry, requestWithRetry } from "../request";
 
 export class OpenAICompatibleChatProvider implements ChatProvider {
 	readonly capability: ChatCapability;
 	private baseUrl: string;
 	private apiToken: string;
 	private timeout: number;
+	private retryCount: number;
 
 	constructor(
 		baseUrl: string,
 		apiToken: string,
 		modelId: string,
-		timeout: number
+		timeout: number,
+		retryCount: number
 	) {
 		this.baseUrl = baseUrl.replace(/\/+$/, "");
 		this.apiToken = apiToken;
 		this.timeout = timeout;
+		this.retryCount = retryCount;
 		this.capability = {
 			providerId: "openai-compatible",
 			modelId,
 			supportsStreaming: true,
 			supportsSystemPrompt: true,
-			supportsVisionInput: false,
+			supportsVisionInput: true,
 			maxContextTokens: 128000,
 		};
 	}
@@ -39,7 +42,7 @@ export class OpenAICompatibleChatProvider implements ChatProvider {
 			stream: false,
 		};
 
-		const response = await requestUrl({
+		const response = await requestWithRetry({
 			url: `${this.baseUrl}/chat/completions`,
 			method: "POST",
 			headers: {
@@ -47,7 +50,9 @@ export class OpenAICompatibleChatProvider implements ChatProvider {
 				Authorization: `Bearer ${this.apiToken}`,
 			},
 			body: JSON.stringify(body),
-			throw: false,
+			timeoutMs: this.timeout,
+			retryCount: this.retryCount,
+			requestLabel: "Chat request",
 		});
 
 		if (response.status !== 200) {
@@ -74,13 +79,19 @@ export class OpenAICompatibleChatProvider implements ChatProvider {
 		};
 
 		// Use fetch for streaming (requestUrl doesn't support streaming)
-		const response = await fetch(`${this.baseUrl}/chat/completions`, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Authorization: `Bearer ${this.apiToken}`,
+		const response = await fetchWithRetry({
+			url: `${this.baseUrl}/chat/completions`,
+			init: {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					Authorization: `Bearer ${this.apiToken}`,
+				},
+				body: JSON.stringify(body),
 			},
-			body: JSON.stringify(body),
+			timeoutMs: this.timeout,
+			retryCount: this.retryCount,
+			requestLabel: "Streaming chat request",
 		});
 
 		if (!response.ok) {

@@ -164,4 +164,45 @@ describe("IndexManager", () => {
 			firstEmbedding?.created_at_ms ?? 0
 		);
 	});
+
+	it("rebuild rescans the vault before indexing", async () => {
+		const { app } = createMockApp({
+			"notes/first.md": { content: "# First\n\nalpha", mtime: 1 },
+			"notes/second.md": { content: "# Second\n\nbeta", mtime: 1 },
+		});
+
+		const db = new Database(app, "storage/test.json");
+		const state = new RuntimeState();
+		const settings = {
+			...DEFAULT_SETTINGS,
+			embeddingProvider: "test-provider",
+			embeddingModel: "test-model",
+		};
+		const manager = new IndexManager(
+			app,
+			db,
+			settings,
+			state,
+			createEmbeddingProvider()
+		);
+
+		db.upsertFile({
+			path: "notes/first.md",
+			kind: "note",
+			ext: ".md",
+			mtime_ms: 1,
+			size_bytes: 10,
+			content_hash: null,
+			status: "indexed",
+			indexed_at_ms: 1,
+			last_seen_scan_ms: 1,
+			last_error: null,
+		});
+
+		await manager.rebuildIndex();
+
+		expect(db.getFile("notes/first.md")?.status).toBe("indexed");
+		expect(db.getFile("notes/second.md")?.status).toBe("indexed");
+		expect(db.getChunksByNote("notes/second.md")).toHaveLength(1);
+	});
 });

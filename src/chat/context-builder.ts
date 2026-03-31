@@ -3,6 +3,7 @@ import type { Database } from "../storage/db";
 import type { SimpleRAGSettings } from "../settings/types";
 import type { SearchResult, NoteChunk, AssetMention } from "../types/domain";
 import { estimateTokens } from "../indexing/chunking/markdown-parser";
+import { arrayBufferToBase64 } from "../utils/base64";
 
 export interface DocumentPacket {
 	type: "note" | "image";
@@ -12,6 +13,7 @@ export interface DocumentPacket {
 	chunks: NoteChunk[];
 	mentions: AssetMention[];
 	score: number;
+	imageDataUrl?: string;
 }
 
 /**
@@ -98,7 +100,7 @@ export class ContextBuilder {
 				continue;
 			}
 
-			const packet = this.buildImagePacket(candidate.result);
+			const packet = await this.buildImagePacket(candidate.result);
 			if (packet) {
 				packets.push(packet);
 			}
@@ -173,10 +175,14 @@ export class ContextBuilder {
 		};
 	}
 
-	private buildImagePacket(result: SearchResult): DocumentPacket | null {
+	private async buildImagePacket(
+		result: SearchResult
+	): Promise<DocumentPacket | null> {
 		if (result.type !== "image" || !result.asset) return null;
 
-		const mentions = result.mentions ?? this.db.getMentionsByAsset(result.asset.asset_path);
+		const mentions =
+			result.mentions ??
+			this.db.getMentionsByAsset(result.asset.asset_path);
 		const headingPath = mentions[0]?.heading_path_text ?? "";
 		const mentionText = mentions.length
 			? mentions
@@ -195,6 +201,9 @@ export class ContextBuilder {
 					})
 					.join("\n\n")
 			: "No note references were available for this image.";
+		const imageDataUrl = await this.buildImageDataUrl(
+			result.asset.asset_path
+		);
 
 		return {
 			type: "image",
@@ -204,7 +213,45 @@ export class ContextBuilder {
 			chunks: [],
 			mentions,
 			score: result.score,
+			imageDataUrl,
 		};
+	}
+
+	private async buildImageDataUrl(
+		assetPath: string
+	): Promise<string | undefined> {
+		const file = this.app.vault.getAbstractFileByPath(assetPath);
+		if (
+			!file ||
+			!("extension" in file) ||
+			typeof file.extension !== "string"
+		) {
+			return undefined;
+		}
+
+		try {
+			const buffer = await this.app.vault.readBinary(file as any);
+			const base64 = arrayBufferToBase64(buffer);
+			return `data:${this.getMimeType(file.extension)};base64,${base64}`;
+		} catch {
+			return undefined;
+		}
+	}
+
+	private getMimeType(extension: string): string {
+		switch (extension.toLowerCase()) {
+			case "png":
+				return "image/png";
+			case "jpg":
+			case "jpeg":
+				return "image/jpeg";
+			case "gif":
+				return "image/gif";
+			case "webp":
+				return "image/webp";
+			default:
+				return "application/octet-stream";
+		}
 	}
 
 	/**

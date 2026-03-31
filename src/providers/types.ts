@@ -59,8 +59,17 @@ export interface ChatCapability {
 	maxContextTokens: number;
 }
 
+export type ChatContentPart =
+	| { type: "text"; text: string }
+	| { type: "image_url"; image_url: { url: string } };
+
+export interface ChatMessage {
+	role: "system" | "user" | "assistant";
+	content: string | ChatContentPart[];
+}
+
 export interface ChatRequest {
-	messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
+	messages: ChatMessage[];
 	stream?: boolean;
 }
 

@@ -10,6 +10,8 @@ import {
 } from "./chunking/markdown-parser";
 import { extractImageReferences } from "./links/image-reference-resolver";
 import { getIndexMode } from "../settings/types";
+import { hashBytes, hashText } from "../utils/hash";
+import { VaultScanner } from "./scanner";
 
 /**
  * Orchestrates the indexing pipeline: reading dirty files, chunking,
@@ -21,6 +23,7 @@ export class IndexManager {
 	private settings: SimpleRAGSettings;
 	private state: RuntimeState;
 	private embeddingProvider: EmbeddingProvider;
+	private lastEmbeddingDimension: number | null = null;
 
 	constructor(
 		app: App,
@@ -96,6 +99,12 @@ export class IndexManager {
 		this.db.setMeta("index_mode", getIndexMode(this.settings));
 		this.db.setMeta("embedding_provider", this.settings.embeddingProvider);
 		this.db.setMeta("embedding_model", this.settings.embeddingModel);
+		if (this.lastEmbeddingDimension != null) {
+			this.db.setMeta(
+				"embedding_dimension",
+				String(this.lastEmbeddingDimension)
+			);
+		}
 		await this.db.save();
 
 		return { indexed, errors };
@@ -107,24 +116,10 @@ export class IndexManager {
 	async rebuildIndex(
 		onProgress?: (current: number, total: number) => void
 	): Promise<{ indexed: number; errors: number }> {
-		// Mark all note files as dirty
-		for (const file of this.db.getAllFiles()) {
-			if (file.kind === "note") {
-				this.db.upsertFile({ ...file, status: "dirty" });
-			}
-		}
-
-		// Clear all chunks, embeddings, assets, mentions
-		for (const chunk of this.db.getAllChunks()) {
-			this.db.deleteChunk(chunk.chunk_id);
-		}
-		for (const emb of this.db.getAllEmbeddings()) {
-			this.db.deleteEmbeddingsByOwner(emb.owner_id);
-		}
-		for (const asset of this.db.getAllAssets()) {
-			this.db.deleteAsset(asset.asset_path);
-		}
-
+		this.db.clearAll();
+		this.state.clearDirty();
+		const scanner = new VaultScanner(this.app, this.db, this.settings);
+		await scanner.scan();
 		return this.updateIndex(onProgress);
 	}
 
@@ -136,6 +131,7 @@ export class IndexManager {
 		if (!file || !("extension" in file)) return;
 
 		const content = await this.app.vault.cachedRead(file as any);
+		const noteHash = hashText(content);
 
 		// 1. Parse and chunk
 		const sections = parseMarkdownSections(content);
@@ -144,6 +140,7 @@ export class IndexManager {
 		// 2. Extract image references
 		const headingPathAtOffset = buildHeadingPathLookup(content);
 		const imageRefs = extractImageReferences(
+			this.app,
 			notePath,
 			content,
 			headingPathAtOffset
@@ -193,6 +190,7 @@ export class IndexManager {
 		if (fileRecord) {
 			this.db.upsertFile({
 				...fileRecord,
+				content_hash: noteHash,
 				status: "indexed",
 				indexed_at_ms: Date.now(),
 				last_error: null,
@@ -206,19 +204,25 @@ export class IndexManager {
 	 * Embed chunks in batches.
 	 */
 	private async embedChunks(chunks: NoteChunk[]): Promise<void> {
-		const batchSize = this.settings.maxConcurrentRequests;
+		const concurrency = Math.max(1, this.settings.maxConcurrentRequests);
+		let cursor = 0;
 
-		for (let i = 0; i < chunks.length; i += batchSize) {
-			const batch = chunks.slice(i, i + batchSize);
-			const texts = batch.map((c) => c.text_for_embedding);
+		const worker = async () => {
+			while (cursor < chunks.length) {
+				// This synchronous read/increment block is safe because JS runs
+				// these statements atomically until the next await.
+				const currentIndex = cursor;
+				cursor += 1;
+				const chunk = chunks[currentIndex];
+				if (!chunk) continue;
 
-			const response = await this.embeddingProvider.embed({ texts });
-
-			for (let j = 0; j < batch.length; j++) {
-				const chunk = batch[j]!;
-				const vector = response.vectors[j];
+				const response = await this.embeddingProvider.embed({
+					texts: [chunk.text_for_embedding],
+				});
+				const vector = response.vectors[0];
 				if (!vector) continue;
 
+				this.lastEmbeddingDimension = response.dimension;
 				this.db.upsertEmbedding({
 					owner_id: chunk.chunk_id,
 					owner_type: "note_chunk",
@@ -230,7 +234,13 @@ export class IndexManager {
 					created_at_ms: Date.now(),
 				});
 			}
-		}
+		};
+
+		await Promise.all(
+			Array.from({ length: Math.min(concurrency, chunks.length) }, () =>
+				worker()
+			)
+		);
 	}
 
 	/**
@@ -277,6 +287,8 @@ export class IndexManager {
 					assetFile as any
 				);
 				const base64 = arrayBufferToBase64(arrayBuffer);
+				const bytes = new Uint8Array(arrayBuffer);
+				const contentHash = hashBytes(bytes);
 
 				if (shouldReindex) {
 					this.db.deleteEmbeddingsByOwner(asset.asset_path);
@@ -287,6 +299,7 @@ export class IndexManager {
 				});
 
 				if (response.vectors[0]) {
+					this.lastEmbeddingDimension = response.dimension;
 					this.db.upsertEmbedding({
 						owner_id: asset.asset_path,
 						owner_type: "asset",
@@ -311,7 +324,7 @@ export class IndexManager {
 					ext: "." + assetFile.extension.toLowerCase(),
 					mtime_ms: assetFile.stat.mtime,
 					size_bytes: assetFile.stat.size,
-					content_hash: currentFileRecord?.content_hash ?? null,
+					content_hash: contentHash,
 					status: "indexed",
 					indexed_at_ms: Date.now(),
 					last_seen_scan_ms:

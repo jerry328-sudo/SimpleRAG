@@ -1,9 +1,17 @@
-import { App, Notice, PluginSettingTab, Setting } from "obsidian";
+import {
+	App,
+	Modal,
+	Notice,
+	PluginSettingTab,
+	Setting,
+} from "obsidian";
 import type SimpleRAGPlugin from "../main";
 import { getIndexMode } from "./types";
+import { ProviderRegistry } from "../providers/registry";
 
 export class SimpleRAGSettingTab extends PluginSettingTab {
 	plugin: SimpleRAGPlugin;
+	private registry = new ProviderRegistry();
 
 	constructor(app: App, plugin: SimpleRAGPlugin) {
 		super(app, plugin);
@@ -16,6 +24,22 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 
 		// ---- Group A: Providers ----
 		containerEl.createEl("h2", { text: "Providers" });
+
+		new Setting(containerEl)
+			.setName("Embedding provider")
+			.setDesc("Provider used to generate embeddings")
+			.addDropdown((dropdown) => {
+				for (const option of this.registry.listEmbeddingProviders()) {
+					dropdown.addOption(option.id, option.label);
+				}
+				dropdown
+					.setValue(this.plugin.settings.embeddingProvider)
+					.onChange(async (value) => {
+						this.plugin.settings.embeddingProvider = value;
+						await this.plugin.saveSettings();
+						this.showRebuildWarning(containerEl);
+					});
+			});
 
 		new Setting(containerEl)
 			.setName("Embedding base URL")
@@ -47,15 +71,16 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Embedding API token")
 			.setDesc("API token for the embedding provider")
-			.addText((text) =>
-				text
+			.addText((text) => {
+				text.inputEl.type = "password";
+				return text
 					.setPlaceholder("sk-...")
 					.setValue(this.plugin.settings.embeddingApiToken)
 					.onChange(async (value) => {
 						this.plugin.settings.embeddingApiToken = value;
 						await this.plugin.saveSettings();
-					})
-			);
+					});
+			});
 
 		// ---- Group B: Features ----
 		containerEl.createEl("h2", { text: "Features" });
@@ -149,8 +174,9 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 					.setButtonText("Rebuild full index")
 					.setWarning()
 					.onClick(async () => {
-						const confirmed = confirm(
-							"This will clear and rebuild the entire index. Continue?"
+						const confirmed = await this.confirmAction(
+							"Rebuild full index",
+							"This will clear the current index, scan the vault again, and rebuild everything. Continue?"
 						);
 						if (confirmed) {
 							await this.plugin.rebuildIndex();
@@ -178,6 +204,20 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					})
 			);
+
+		new Setting(advancedDetails)
+			.setName("Rerank provider")
+			.addDropdown((dropdown) => {
+				for (const option of this.registry.listRerankProviders()) {
+					dropdown.addOption(option.id, option.label);
+				}
+				dropdown
+					.setValue(this.plugin.settings.rerankProvider)
+					.onChange(async (value) => {
+						this.plugin.settings.rerankProvider = value;
+						await this.plugin.saveSettings();
+					});
+			});
 
 		new Setting(advancedDetails)
 			.setName("Rerank model")
@@ -223,8 +263,37 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 					})
 			);
 
+		new Setting(advancedDetails)
+			.setName("Default result tab")
+			.addDropdown((dropdown) =>
+				dropdown
+					.addOption("all", "All")
+					.addOption("notes", "Notes")
+					.addOption("images", "Images")
+					.setValue(this.plugin.settings.defaultResultTab)
+					.onChange(async (value) => {
+						this.plugin.settings.defaultResultTab =
+							value as typeof this.plugin.settings.defaultResultTab;
+						await this.plugin.saveSettings();
+					})
+			);
+
 		// Chat
 		advancedDetails.createEl("h3", { text: "Chat" });
+
+		new Setting(advancedDetails)
+			.setName("Chat provider")
+			.addDropdown((dropdown) => {
+				for (const option of this.registry.listChatProviders()) {
+					dropdown.addOption(option.id, option.label);
+				}
+				dropdown
+					.setValue(this.plugin.settings.chatProvider)
+					.onChange(async (value) => {
+						this.plugin.settings.chatProvider = value;
+						await this.plugin.saveSettings();
+					});
+			});
 
 		new Setting(advancedDetails)
 			.setName("Chat base URL")
@@ -252,13 +321,29 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 
 		new Setting(advancedDetails)
 			.setName("Chat API token")
-			.addText((text) =>
-				text
+			.addText((text) => {
+				text.inputEl.type = "password";
+				return text
 					.setPlaceholder("sk-...")
 					.setValue(this.plugin.settings.chatApiToken)
 					.onChange(async (value) => {
 						this.plugin.settings.chatApiToken = value;
 						await this.plugin.saveSettings();
+					});
+			});
+
+		new Setting(advancedDetails)
+			.setName("Short note threshold")
+			.setDesc("Notes below this token estimate are sent in full")
+			.addText((text) =>
+				text
+					.setValue(String(this.plugin.settings.shortNoteThreshold))
+					.onChange(async (value) => {
+						const num = parseInt(value, 10);
+						if (!isNaN(num) && num > 0) {
+							this.plugin.settings.shortNoteThreshold = num;
+							await this.plugin.saveSettings();
+						}
 					})
 			);
 
@@ -273,6 +358,23 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 						const num = parseInt(value, 10);
 						if (!isNaN(num) && num > 0) {
 							this.plugin.settings.maxNotesInChatContext = num;
+							await this.plugin.saveSettings();
+						}
+					})
+			);
+
+		new Setting(advancedDetails)
+			.setName("Long note context window")
+			.setDesc("How many neighboring chunks to include around a hit")
+			.addText((text) =>
+				text
+					.setValue(
+						String(this.plugin.settings.longNoteContextWindow)
+					)
+					.onChange(async (value) => {
+						const num = parseInt(value, 10);
+						if (!isNaN(num) && num >= 0) {
+							this.plugin.settings.longNoteContextWindow = num;
 							await this.plugin.saveSettings();
 						}
 					})
@@ -309,15 +411,16 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 
 		new Setting(advancedDetails)
 			.setName("Rerank API token")
-			.addText((text) =>
-				text
+			.addText((text) => {
+				text.inputEl.type = "password";
+				return text
 					.setPlaceholder("sk-...")
 					.setValue(this.plugin.settings.rerankApiToken)
 					.onChange(async (value) => {
 						this.plugin.settings.rerankApiToken = value;
 						await this.plugin.saveSettings();
-					})
-			);
+					});
+			});
 
 		new Setting(advancedDetails)
 			.setName("Timeout (ms)")
@@ -344,6 +447,20 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 						const num = parseInt(value, 10);
 						if (!isNaN(num) && num > 0) {
 							this.plugin.settings.maxConcurrentRequests = num;
+							await this.plugin.saveSettings();
+						}
+					})
+			);
+
+		new Setting(advancedDetails)
+			.setName("Retry count")
+			.addText((text) =>
+				text
+					.setValue(String(this.plugin.settings.retryCount))
+					.onChange(async (value) => {
+						const num = parseInt(value, 10);
+						if (!isNaN(num) && num >= 0) {
+							this.plugin.settings.retryCount = num;
 							await this.plugin.saveSettings();
 						}
 					})
@@ -382,7 +499,8 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 					.setButtonText("Clear index")
 					.setWarning()
 					.onClick(async () => {
-						const confirmed = confirm(
+						const confirmed = await this.confirmAction(
+							"Clear local index",
 							"This will delete all indexed data. Continue?"
 						);
 						if (confirmed) {
@@ -403,5 +521,62 @@ export class SimpleRAGSettingTab extends PluginSettingTab {
 		);
 		warning.style.color = "var(--text-error)";
 		warning.style.marginTop = "8px";
+	}
+
+	private async confirmAction(
+		title: string,
+		message: string
+	): Promise<boolean> {
+		return new Promise((resolve) => {
+			const modal = new ConfirmActionModal(
+				this.app,
+				title,
+				message,
+				resolve
+			);
+			modal.open();
+		});
+	}
+}
+
+class ConfirmActionModal extends Modal {
+	private title: string;
+	private message: string;
+	private onResolve: (confirmed: boolean) => void;
+
+	constructor(
+		app: App,
+		title: string,
+		message: string,
+		onResolve: (confirmed: boolean) => void
+	) {
+		super(app);
+		this.title = title;
+		this.message = message;
+		this.onResolve = onResolve;
+	}
+
+	onOpen(): void {
+		this.contentEl.empty();
+		this.contentEl.createEl("h3", { text: this.title });
+		this.contentEl.createEl("p", { text: this.message });
+
+		const actions = this.contentEl.createDiv("simple-rag-confirm-actions");
+		const cancelBtn = actions.createEl("button", { text: "Cancel" });
+		cancelBtn.addEventListener("click", () => {
+			this.onResolve(false);
+			this.close();
+		});
+
+		const confirmBtn = actions.createEl("button", { text: "Confirm" });
+		confirmBtn.addClass("mod-warning");
+		confirmBtn.addEventListener("click", () => {
+			this.onResolve(true);
+			this.close();
+		});
+	}
+
+	onClose(): void {
+		this.contentEl.empty();
 	}
 }

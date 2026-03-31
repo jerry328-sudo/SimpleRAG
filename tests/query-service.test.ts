@@ -103,16 +103,101 @@ describe("QueryService", () => {
 		};
 
 		const service = new QueryService(
+			app,
 			db,
 			settings,
 			embeddingProvider,
 			null
 		);
 
-		const results = await service.search("query");
+		const results = await service.searchText("query");
 
 		expect(results).toHaveLength(1);
 		expect(results[0]?.type).toBe("note");
 		expect(results[0]?.notePath).toBe("notes/a.md");
+	});
+
+	it("throws a rebuild error when embeddings exist but do not match active settings", async () => {
+		const { app } = createMockApp();
+		const db = new Database(app, "storage/test.json");
+
+		db.upsertEmbedding({
+			owner_id: "notes/a.md#0",
+			owner_type: "note_chunk",
+			provider_id: "old-provider",
+			model_id: "old-model",
+			modality: "text",
+			dimension: 3,
+			vector: [1, 0, 0],
+			created_at_ms: 1,
+		});
+
+		const embeddingProvider: EmbeddingProvider = {
+			capability: {
+				providerId: "active-provider",
+				modelId: "active-model",
+				supportsText: true,
+				supportsImage: false,
+				supportsCrossModal: false,
+				dimension: 3,
+				maxInputTokens: 8192,
+			},
+			async embed() {
+				return { dimension: 3, vectors: [[1, 0, 0]] };
+			},
+		};
+
+		const service = new QueryService(
+			app,
+			db,
+			{
+				...DEFAULT_SETTINGS,
+				embeddingProvider: "active-provider",
+				embeddingModel: "active-model",
+			},
+			embeddingProvider,
+			null
+		);
+
+		await expect(service.searchText("query")).rejects.toThrow(
+			"Rebuild the full index"
+		);
+	});
+
+	it("rejects image search when image embedding is disabled", async () => {
+		const { app, setBinaryFile } = createMockApp();
+		setBinaryFile("assets/query.png", new Uint8Array([1, 2, 3]));
+
+		const embeddingProvider: EmbeddingProvider = {
+			capability: {
+				providerId: "active-provider",
+				modelId: "active-model",
+				supportsText: true,
+				supportsImage: true,
+				supportsCrossModal: true,
+				dimension: 3,
+				maxInputTokens: 8192,
+			},
+			async embed() {
+				return { dimension: 3, vectors: [[1, 0, 0]] };
+			},
+		};
+
+		const service = new QueryService(
+			app,
+			new Database(app, "storage/test.json"),
+			{
+				...DEFAULT_SETTINGS,
+				enableImageEmbedding: false,
+				embeddingProvider: "active-provider",
+				embeddingModel: "active-model",
+			},
+			embeddingProvider,
+			null
+		);
+
+		await expect(service.searchImage("assets/query.png")).rejects.toThrow(
+			"Image queries require image embedding to be enabled"
+		);
 	});
 });

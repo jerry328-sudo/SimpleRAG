@@ -1,7 +1,7 @@
 {
-	"name": "obsidian-sample-plugin",
+	"name": "simple-rag",
 	"version": "1.0.0",
-	"description": "This is a sample plugin for Obsidian (https://obsidian.md)",
+	"description": "Local RAG indexing and search for your Obsidian vault with multimodal chat support.",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {

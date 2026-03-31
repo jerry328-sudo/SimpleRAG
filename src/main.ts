@@ -200,6 +200,12 @@ export default class SimpleRAGPlugin extends Plugin {
 			return;
 		}
 
+		const validationErrors = this.providerRegistry.validateSettings(this.settings);
+		if (validationErrors.length > 0) {
+			new Notice(`SimpleRAG: ${validationErrors[0]}`);
+			return;
+		}
+
 		this.state.isIndexing = true;
 
 		try {
@@ -248,6 +254,12 @@ export default class SimpleRAGPlugin extends Plugin {
 
 		if (!this.settings.embeddingApiToken) {
 			new Notice("SimpleRAG: Please configure an embedding API token in settings");
+			return;
+		}
+
+		const validationErrors = this.providerRegistry.validateSettings(this.settings);
+		if (validationErrors.length > 0) {
+			new Notice(`SimpleRAG: ${validationErrors[0]}`);
 			return;
 		}
 
@@ -304,6 +316,11 @@ export default class SimpleRAGPlugin extends Plugin {
 			throw new Error("Please configure an embedding API token in settings");
 		}
 
+		const validationErrors = this.providerRegistry.validateSettings(this.settings);
+		if (validationErrors.length > 0) {
+			throw new Error(validationErrors[0]!);
+		}
+
 		const embeddingProvider =
 			this.providerRegistry.createEmbeddingProvider(this.settings);
 
@@ -314,13 +331,47 @@ export default class SimpleRAGPlugin extends Plugin {
 		}
 
 		const queryService = new QueryService(
+			this.app,
 			this.db,
 			this.settings,
 			embeddingProvider,
 			rerankProvider
 		);
 
-		return queryService.search(query);
+		return queryService.searchText(query);
+	}
+
+	async searchByImage(imagePath: string): Promise<SearchResult[]> {
+		if (!this.settings.embeddingApiToken) {
+			throw new Error("Please configure an embedding API token in settings");
+		}
+		if (!this.settings.enableImageEmbedding) {
+			throw new Error("Enable image embedding before running image search.");
+		}
+
+		const validationErrors = this.providerRegistry.validateSettings(this.settings);
+		if (validationErrors.length > 0) {
+			throw new Error(validationErrors[0]!);
+		}
+
+		const embeddingProvider =
+			this.providerRegistry.createEmbeddingProvider(this.settings);
+
+		let rerankProvider = null;
+		if (this.settings.enableRerank && this.settings.rerankApiToken) {
+			rerankProvider =
+				this.providerRegistry.createRerankProvider(this.settings);
+		}
+
+		const queryService = new QueryService(
+			this.app,
+			this.db,
+			this.settings,
+			embeddingProvider,
+			rerankProvider
+		);
+
+		return queryService.searchImage(imagePath);
 	}
 
 	async chat(
@@ -330,6 +381,11 @@ export default class SimpleRAGPlugin extends Plugin {
 	): Promise<{ content: string; references: ChatReference[] }> {
 		if (!this.settings.chatApiToken) {
 			throw new Error("Please configure a chat API token in settings");
+		}
+
+		const validationErrors = this.providerRegistry.validateSettings(this.settings);
+		if (validationErrors.length > 0) {
+			throw new Error(validationErrors[0]!);
 		}
 
 		const chatProvider =

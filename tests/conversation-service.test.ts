@@ -8,7 +8,11 @@ import { createMockApp } from "./helpers";
 
 describe("ConversationService", () => {
 	it("includes image results in chat context and references", async () => {
-		const { app } = createMockApp();
+		const { app } = createMockApp({
+			"assets/diagram.png": {
+				binary: new Uint8Array([1, 2, 3, 4]),
+			},
+		});
 		const db = new Database(app, "storage/test.json");
 
 		db.upsertAsset({
@@ -32,19 +36,27 @@ describe("ConversationService", () => {
 		});
 
 		let capturedPrompt = "";
+		let capturedMessages: any[] = [];
 		const chatProvider: ChatProvider = {
 			capability: {
 				providerId: "chat-provider",
 				modelId: "chat-model",
 				supportsStreaming: false,
 				supportsSystemPrompt: true,
-				supportsVisionInput: false,
+				supportsVisionInput: true,
 				maxContextTokens: 8192,
 			},
 			async chat(request) {
-				capturedPrompt =
-					request.messages.find((message) => message.role === "user")
-						?.content ?? "";
+				capturedMessages = request.messages;
+				const userMessage = request.messages.find(
+					(message) => message.role === "user"
+				);
+				capturedPrompt = Array.isArray(userMessage?.content)
+					? userMessage.content
+							.filter((part) => part.type === "text")
+							.map((part) => part.text)
+							.join("\n")
+					: userMessage?.content ?? "";
 				return {
 					content: "answer",
 				};
@@ -78,6 +90,13 @@ describe("ConversationService", () => {
 
 		expect(capturedPrompt).toContain("assets/diagram.png");
 		expect(capturedPrompt).toContain("notes/design.md");
+		const visionMessage = capturedMessages.find(
+			(message) => message.role === "user" && Array.isArray(message.content)
+		);
+		expect(Array.isArray(visionMessage?.content)).toBe(true);
+		expect(
+			visionMessage?.content.some((part: any) => part.type === "image_url")
+		).toBe(true);
 		expect(response.references).toHaveLength(1);
 		expect(response.references[0]?.type).toBe("image");
 		expect(response.references[0]?.path).toBe("assets/diagram.png");

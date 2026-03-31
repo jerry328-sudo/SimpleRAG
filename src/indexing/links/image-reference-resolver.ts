@@ -1,3 +1,4 @@
+import { normalizePath, type App } from "obsidian";
 import type { AssetMention, LinkKind } from "../../types/domain";
 
 interface ImageRef {
@@ -20,6 +21,7 @@ const IMAGE_EXTENSIONS = new Set([
  * Supports `![[image.png]]` (wikilink) and `![alt](path)` (markdown-image).
  */
 export function extractImageReferences(
+	app: App,
 	notePath: string,
 	content: string,
 	headingPathAtOffset: (offset: number) => { json: string; text: string }
@@ -38,9 +40,12 @@ export function extractImageReferences(
 		const heading = headingPathAtOffset(match.index);
 		const surrounding = getSurroundingText(content, match.index, 200);
 
+		const resolvedTarget = resolveWikiLinkPath(app, notePath, target);
+		if (!resolvedTarget) continue;
+
 		mentions.push({
 			mention_id: `${notePath}#img#${mentionIndex}`,
-			asset_path: normalizeImagePath(target),
+			asset_path: resolvedTarget,
 			note_path: notePath,
 			mention_index: mentionIndex,
 			heading_path_json: heading.json,
@@ -64,9 +69,12 @@ export function extractImageReferences(
 		const heading = headingPathAtOffset(match.index);
 		const surrounding = getSurroundingText(content, match.index, 200);
 
+		const resolvedTarget = resolveMarkdownImagePath(notePath, target);
+		if (!resolvedTarget) continue;
+
 		mentions.push({
 			mention_id: `${notePath}#img#${mentionIndex}`,
-			asset_path: normalizeImagePath(target),
+			asset_path: resolvedTarget,
 			note_path: notePath,
 			mention_index: mentionIndex,
 			heading_path_json: heading.json,
@@ -87,15 +95,55 @@ function isImagePath(path: string): boolean {
 	return Array.from(IMAGE_EXTENSIONS).some((ext) => lower.endsWith(ext));
 }
 
-function normalizeImagePath(target: string): string {
-	// Remove URL encoding, normalize separators
-	let p = decodeURIComponent(target);
-	p = p.replace(/\\/g, "/");
-	// Remove leading ./
-	if (p.startsWith("./")) {
-		p = p.slice(2);
+function resolveWikiLinkPath(
+	app: App,
+	notePath: string,
+	target: string
+): string | null {
+	const normalizedTarget = normalizeTarget(target);
+	const resolvedFile = app.metadataCache.getFirstLinkpathDest(
+		normalizedTarget,
+		notePath
+	);
+
+	if (resolvedFile?.path) {
+		return resolvedFile.path;
 	}
-	return p;
+
+	return resolveMarkdownImagePath(notePath, normalizedTarget);
+}
+
+function resolveMarkdownImagePath(
+	notePath: string,
+	target: string
+): string | null {
+	const normalizedTarget = normalizeTarget(target);
+	if (!normalizedTarget) {
+		return null;
+	}
+
+	if (normalizedTarget.startsWith("/")) {
+		return normalizePath(normalizedTarget.slice(1));
+	}
+
+	const noteDirectory = notePath.includes("/")
+		? notePath.slice(0, notePath.lastIndexOf("/"))
+		: "";
+	if (!noteDirectory) {
+		return normalizePath(normalizedTarget);
+	}
+
+	return normalizePath(`${noteDirectory}/${normalizedTarget}`);
+}
+
+function normalizeTarget(target: string): string {
+	let normalized = decodeURIComponent(target.trim());
+	normalized = normalized.replace(/^<|>$/g, "");
+	normalized = normalized.replace(/\\/g, "/");
+	if (normalized.startsWith("./")) {
+		normalized = normalized.slice(2);
+	}
+	return normalized;
 }
 
 function getSurroundingText(
