@@ -1,8 +1,336 @@
-/*
+/* SimpleRAG Plugin Styles */
 
-This CSS file will be included with your plugin, and
-available in the app when your plugin is enabled.
+/* ---- Container ---- */
+.simple-rag-container {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	gap: 8px;
+	padding: 8px;
+}
 
-If your plugin does not need CSS, delete this file.
+/* ---- Status Panel ---- */
+.simple-rag-status-panel {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 8px;
+	background: var(--background-secondary);
+	border-radius: 6px;
+}
 
-*/
+.simple-rag-status-line {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	font-size: var(--font-ui-small);
+	color: var(--text-muted);
+	flex-wrap: wrap;
+}
+
+.simple-rag-badge {
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+	padding: 1px 6px;
+	border-radius: 4px;
+	font-size: var(--font-ui-smaller);
+	font-weight: 600;
+	text-transform: uppercase;
+}
+
+.simple-rag-dirty-count {
+	color: var(--text-warning);
+	font-weight: 600;
+}
+
+.simple-rag-status-buttons {
+	display: flex;
+	gap: 6px;
+}
+
+.simple-rag-status-buttons button {
+	font-size: var(--font-ui-smaller);
+	padding: 3px 10px;
+}
+
+/* ---- Search Box ---- */
+.simple-rag-search-box {
+	display: flex;
+	gap: 6px;
+}
+
+.simple-rag-search-input {
+	flex: 1;
+	padding: 6px 10px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	background: var(--background-primary);
+	color: var(--text-normal);
+	font-size: var(--font-ui-medium);
+}
+
+.simple-rag-search-input:focus {
+	border-color: var(--interactive-accent);
+	outline: none;
+}
+
+.simple-rag-search-btn {
+	padding: 6px 14px;
+	font-weight: 600;
+}
+
+/* ---- Tabs ---- */
+.simple-rag-tabs {
+	display: flex;
+	gap: 2px;
+	border-bottom: 1px solid var(--background-modifier-border);
+	padding-bottom: 0;
+}
+
+.simple-rag-tab {
+	padding: 4px 12px;
+	font-size: var(--font-ui-small);
+	border: none;
+	background: none;
+	color: var(--text-muted);
+	cursor: pointer;
+	border-bottom: 2px solid transparent;
+	border-radius: 0;
+}
+
+.simple-rag-tab:hover {
+	color: var(--text-normal);
+}
+
+.simple-rag-tab.active {
+	color: var(--interactive-accent);
+	border-bottom-color: var(--interactive-accent);
+	font-weight: 600;
+}
+
+/* ---- Results ---- */
+.simple-rag-results {
+	flex: 1;
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+}
+
+.simple-rag-empty {
+	color: var(--text-muted);
+	text-align: center;
+	padding: 24px;
+	font-size: var(--font-ui-small);
+}
+
+.simple-rag-result-item {
+	padding: 8px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	cursor: pointer;
+	transition: background 0.1s;
+}
+
+.simple-rag-result-item:hover {
+	background: var(--background-secondary);
+}
+
+.simple-rag-result-header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 4px;
+}
+
+.simple-rag-type-badge {
+	font-size: var(--font-ui-smaller);
+	padding: 1px 6px;
+	border-radius: 4px;
+	font-weight: 600;
+}
+
+.simple-rag-type-note {
+	background: var(--color-blue);
+	color: white;
+}
+
+.simple-rag-type-image {
+	background: var(--color-green);
+	color: white;
+}
+
+.simple-rag-score {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	margin-left: auto;
+}
+
+.simple-rag-result-path {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-accent);
+	margin-bottom: 2px;
+}
+
+.simple-rag-result-heading {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	font-style: italic;
+	margin-bottom: 4px;
+}
+
+.simple-rag-result-snippet {
+	font-size: var(--font-ui-small);
+	color: var(--text-normal);
+	line-height: 1.4;
+	display: -webkit-box;
+	-webkit-line-clamp: 3;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+
+.simple-rag-result-actions {
+	display: flex;
+	gap: 6px;
+	margin-top: 6px;
+}
+
+.simple-rag-result-actions button {
+	font-size: var(--font-ui-smaller);
+	padding: 2px 8px;
+}
+
+/* ---- Chat Panel ---- */
+.simple-rag-chat-panel {
+	border-top: 1px solid var(--background-modifier-border);
+	padding-top: 8px;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	max-height: 50%;
+}
+
+.simple-rag-chat-panel h4 {
+	margin: 0;
+	font-size: var(--font-ui-medium);
+}
+
+.simple-rag-chat-history {
+	overflow-y: auto;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	max-height: 200px;
+}
+
+.simple-rag-chat-msg {
+	padding: 6px 10px;
+	border-radius: 6px;
+	font-size: var(--font-ui-small);
+}
+
+.simple-rag-chat-user {
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+	align-self: flex-end;
+	max-width: 85%;
+}
+
+.simple-rag-chat-assistant {
+	background: var(--background-secondary);
+	align-self: flex-start;
+	max-width: 85%;
+}
+
+.simple-rag-chat-role {
+	font-weight: 600;
+	font-size: var(--font-ui-smaller);
+	margin-bottom: 2px;
+}
+
+.simple-rag-chat-content {
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.simple-rag-chat-references {
+	font-size: var(--font-ui-smaller);
+	border-top: 1px solid var(--background-modifier-border);
+	padding-top: 6px;
+}
+
+.simple-rag-chat-references h5 {
+	margin: 0 0 4px 0;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+
+.simple-rag-ref-item {
+	padding: 2px 0;
+}
+
+.simple-rag-ref-index {
+	font-weight: 600;
+	color: var(--interactive-accent);
+}
+
+.simple-rag-ref-link {
+	cursor: pointer;
+	color: var(--text-accent);
+}
+
+.simple-rag-ref-heading {
+	color: var(--text-muted);
+}
+
+.simple-rag-chat-input {
+	display: flex;
+	gap: 6px;
+}
+
+.simple-rag-chat-textarea {
+	flex: 1;
+	resize: none;
+	min-height: 36px;
+	max-height: 100px;
+	padding: 6px 10px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	background: var(--background-primary);
+	color: var(--text-normal);
+	font-size: var(--font-ui-small);
+	font-family: inherit;
+}
+
+.simple-rag-chat-textarea:focus {
+	border-color: var(--interactive-accent);
+	outline: none;
+}
+
+.simple-rag-chat-send {
+	padding: 6px 14px;
+	font-weight: 600;
+	align-self: flex-end;
+}
+
+/* ---- Error ---- */
+.simple-rag-error {
+	background: var(--background-modifier-error);
+	color: var(--text-error);
+	padding: 8px;
+	border-radius: 6px;
+	font-size: var(--font-ui-small);
+}
+
+/* ---- Settings page extras ---- */
+.simple-rag-index-status p {
+	margin: 2px 0;
+	font-size: var(--font-ui-small);
+}
+
+.simple-rag-rebuild-warning {
+	padding: 6px 10px;
+	background: var(--background-modifier-error);
+	border-radius: 4px;
+	font-size: var(--font-ui-small);
+}
