@@ -1,7 +1,20 @@
+import type { Linter } from "eslint";
 import tseslint from 'typescript-eslint';
 import obsidianmd from "eslint-plugin-obsidianmd";
 import globals from "globals";
 import { globalIgnores } from "eslint/config";
+
+const obsidianRecommendedConfig = obsidianmd.configs?.recommended;
+
+if (!obsidianRecommendedConfig) {
+	throw new Error(
+		"eslint-plugin-obsidianmd did not expose a recommended config."
+	);
+}
+
+const obsidianRecommended = Array.from(
+	obsidianRecommendedConfig as Iterable<Linter.Config>
+);
 
 export default tseslint.config(
 	{
@@ -16,7 +29,7 @@ export default tseslint.config(
 			},
 		},
 	},
-	...obsidianmd.configs.recommended,
+	...obsidianRecommended,
 	globalIgnores([
 		"node_modules",
 		"dist",
